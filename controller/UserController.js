@@ -345,6 +345,7 @@ export const adminUpdateUser = async (req, res) => {
                 : req.body.attendanceSettings;
             user.attendanceSettings = { ...user.attendanceSettings, ...as };
         }
+        if (req.body.branch !== undefined) user.branch = req.body.branch || null;
         
         if (req.file) {
             const finalProposal = await uploadToCloudinary(req.file, "digicoders/hrmsv2/proposals");

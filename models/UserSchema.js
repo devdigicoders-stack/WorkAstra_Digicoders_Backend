@@ -176,15 +176,13 @@ const UserSchema = new mongoose.Schema({
     bankRejectedReason: { type: String, default: null },
 
     attendanceSettings: {
-        geofenceEnabled: { type: Boolean, default: false },
-        geofenceLocation: {
-            latitude: { type: Number, default: null },
-            longitude: { type: Number, default: null },
-            address: { type: String, default: null }
-        },
-        geofenceRadius: { type: Number, default: 100 }, // meters
         faceRecognitionEnabled: { type: Boolean, default: false },
-        faceDescriptor: { type: [Number], default: null }, // stored face embedding
+        faceDescriptor: { type: [Number], default: null },
+    },
+    branch: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Branch",
+        default: null
     }
 
 }, { timestamps: true })

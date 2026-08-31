@@ -2,6 +2,7 @@ import Attendance from "../models/AttendanceSchema.js";
 import User from "../models/UserSchema.js";
 import WorkShift from "../models/workShiftSchema.js";
 import Role from "../models/roleSchema.js";
+import Branch from "../models/BranchSchema.js";
 import { createNotification } from "../utills/notificationHelper.js";
 import { getSubordinateIds } from "../utills/hierarchyHelper.js";
 // hhhhh
@@ -78,22 +79,25 @@ export const checkIn = async (req, res) => {
         const userId = req.user.userId;
         const { latitude, longitude, address, faceDescriptor } = req.body;
 
-        const user = await User.findById(userId).select("companyId workShift attendanceSettings");
+        const user = await User.findById(userId).select("companyId workShift attendanceSettings branch");
         if (!user) return res.status(404).json({ message: "User not found", success: false });
 
-        // ── Geofence check ──
-        const geo = user.attendanceSettings;
-        if (geo?.geofenceEnabled && geo.geofenceLocation?.latitude && latitude && longitude) {
-            const dist = haversineDistance(geo.geofenceLocation.latitude, geo.geofenceLocation.longitude, latitude, longitude);
-            if (dist > geo.geofenceRadius) {
-                return res.status(403).json({
-                    message: `You are ${Math.round(dist)}m away from the allowed location. Must be within ${geo.geofenceRadius}m.`,
-                    success: false
-                });
+        // ── Geofence check (Branch level) ──
+        if (latitude && longitude) {
+            const branch = user.branch ? await Branch.findById(user.branch) : null;
+            if (branch?.location?.latitude) {
+                const dist = haversineDistance(branch.location.latitude, branch.location.longitude, latitude, longitude);
+                if (dist > branch.geofenceRadius) {
+                    return res.status(403).json({
+                        message: `You are ${Math.round(dist)}m away from ${branch.name}. Must be within ${branch.geofenceRadius}m.`,
+                        success: false
+                    });
+                }
             }
         }
 
         // ── Face recognition check ──
+        const geo = user.attendanceSettings;
         if (geo?.faceRecognitionEnabled) {
             if (!faceDescriptor || !Array.isArray(faceDescriptor))
                 return res.status(400).json({ message: "Face scan required for check-in.", success: false });

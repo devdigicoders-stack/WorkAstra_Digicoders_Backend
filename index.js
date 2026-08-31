@@ -39,6 +39,7 @@ import AssetRoute from './route/AssetRoute.js'
 import AssetTypeRoute from './route/AssetTypeRoute.js'
 import MeetingRoute from "./route/MeetingRoute.js";
 import SalesReportRoute from "./route/SalesReportRoute.js";
+import BranchRoute from "./route/BranchRoute.js";
 import ResignationRoute from './route/ResignationRoute.js'
 import PerformanceRoute from './route/PerformanceRoute.js'
 import PenaltyDateRoute from './route/penaltyDateRoute.js'
@@ -97,6 +98,7 @@ app.use('/api/payments', PaymentRoute);
 app.use('/api/resignations', ResignationRoute);
 app.use('/api/performance', PerformanceRoute);
 app.use('/api/penalty-dates', PenaltyDateRoute);
+app.use('/api/branches', BranchRoute);
 
 app.get('/', (req, res) => {
     res.send("API is running")
