@@ -90,7 +90,7 @@ export const createCompanyWithAdmin = async (req, res) => {
         // Create Admin Role (if using a Role collection)
         let adminRole = await Role.findOne({ name: "admin", companyId: company._id });
         if (!adminRole) {
-            adminRole = new Role({ name: "admin", companyId: company._id, permissions: ["Create_USER", "UPDATE_USER", "DELETE_USER", "VIEW_DEPARTMENT", "VIEW_USER", "VIEW_ALL_USERS", "Create_ROLE", "UPDATE_ROLE", "DELETE_ROLE", "VIEW_ROLE", "VIEW_ALL_ROLES", "VIEW_ALL_COMPLAINTS", "MANAGE_COMPLAINT"] }); // Add default permissions as needed});
+            adminRole = new Role({ name: "admin", companyId: company._id, permissions: ["Create_USER", "UPDATE_USER", "DELETE_USER", "VIEW_DEPARTMENT", "VIEW_USER", "VIEW_ALL_USERS", "Create_ROLE", "UPDATE_ROLE", "DELETE_ROLE", "VIEW_ROLE", "VIEW_ALL_ROLES", "VIEW_ALL_COMPLAINTS", "MANAGE_COMPLAINT", "CREATE_BRANCH", "UPDATE_BRANCH", "DELETE_BRANCH", "VIEW_BRANCH", "VIEW_ALL_BRANCHES", "MANAGE_BRANCH"] });
             await adminRole.save();
         }
 

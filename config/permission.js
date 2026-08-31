@@ -152,5 +152,13 @@ export const permission = {
     AssetType: {
         VIEW_ASSET_TYPE: "VIEW_ASSET_TYPE",
         MANAGE_ASSET_TYPE: "MANAGE_ASSET_TYPE",
+    },
+    Branch: {
+        CREATE_BRANCH: "CREATE_BRANCH",
+        UPDATE_BRANCH: "UPDATE_BRANCH",
+        DELETE_BRANCH: "DELETE_BRANCH",
+        VIEW_BRANCH: "VIEW_BRANCH",
+        VIEW_ALL_BRANCHES: "VIEW_ALL_BRANCHES",
+        MANAGE_BRANCH: "MANAGE_BRANCH",
     }
 };
