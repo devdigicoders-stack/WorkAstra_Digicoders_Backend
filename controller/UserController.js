@@ -339,6 +339,12 @@ export const adminUpdateUser = async (req, res) => {
         if (joiningDate) user.joiningDate = normalizeDate(joiningDate);
         if (dateOfBirth) user.dateOfBirth = normalizeDate(dateOfBirth);
         if (aadharDateOfBirth) user.aadharDateOfBirth = normalizeDate(aadharDateOfBirth);
+        if (req.body.attendanceSettings !== undefined) {
+            const as = typeof req.body.attendanceSettings === "string"
+                ? JSON.parse(req.body.attendanceSettings)
+                : req.body.attendanceSettings;
+            user.attendanceSettings = { ...user.attendanceSettings, ...as };
+        }
         
         if (req.file) {
             const finalProposal = await uploadToCloudinary(req.file, "digicoders/hrmsv2/proposals");
@@ -801,3 +807,17 @@ export const adminEditBankDetails = async (req, res) => {
     }
 };
 
+// POST /api/user/register-face — Employee registers their face descriptor
+export const registerFace = async (req, res) => {
+    try {
+        const { faceDescriptor } = req.body;
+        if (!faceDescriptor || !Array.isArray(faceDescriptor))
+            return res.status(400).json({ message: "Face descriptor is required", success: false });
+        await User.findByIdAndUpdate(req.user.userId, {
+            "attendanceSettings.faceDescriptor": faceDescriptor
+        });
+        res.json({ message: "Face registered successfully", success: true });
+    } catch (error) {
+        res.status(500).json({ message: error.message, success: false });
+    }
+};

@@ -173,7 +173,19 @@ const UserSchema = new mongoose.Schema({
         enum: ["pending", "approved", "rejected", null],
         default: null
     },
-    bankRejectedReason: { type: String, default: null }
+    bankRejectedReason: { type: String, default: null },
+
+    attendanceSettings: {
+        geofenceEnabled: { type: Boolean, default: false },
+        geofenceLocation: {
+            latitude: { type: Number, default: null },
+            longitude: { type: Number, default: null },
+            address: { type: String, default: null }
+        },
+        geofenceRadius: { type: Number, default: 100 }, // meters
+        faceRecognitionEnabled: { type: Boolean, default: false },
+        faceDescriptor: { type: [Number], default: null }, // stored face embedding
+    }
 
 }, { timestamps: true })
 

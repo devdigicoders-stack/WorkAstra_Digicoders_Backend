@@ -1,5 +1,5 @@
 import express from "express";
-import { registerUser, loginUser, forgotPassword, resetPassword, adminChangePassword, getAllUsers, getAllUsersByCompany, verifyToken, getUserProfile, updateUserProfile, adminUpdateUser, toggleUserStatus, logoutUser, changePassword, deleteUser, saveFcmToken, getUpcomingEvents, getAllClients, getGreetingCardUrl, submitBankDetails, getMyBankDetails, approveBankDetails, rejectBankDetails, adminEditBankDetails } from "../controller/UserController.js";
+import { registerUser, loginUser, forgotPassword, resetPassword, adminChangePassword, getAllUsers, getAllUsersByCompany, verifyToken, getUserProfile, updateUserProfile, adminUpdateUser, toggleUserStatus, logoutUser, changePassword, deleteUser, saveFcmToken, getUpcomingEvents, getAllClients, getGreetingCardUrl, submitBankDetails, getMyBankDetails, approveBankDetails, rejectBankDetails, adminEditBankDetails, registerFace } from "../controller/UserController.js";
 import upload from "../middleware/multer.js";
 import { protect, hasPermission } from "../middleware/authMiddleware.js";
 
@@ -13,6 +13,7 @@ router.post("/reset-password", resetPassword);
 router.get("/logout", logoutUser);
 router.get("/profile", protect, getUserProfile);
 router.put("/profile", protect, upload.single("profilePic"), updateUserProfile);
+router.post("/register-face", protect, registerFace);
 
 // Bank & UPI Details
 router.get("/bank-details", protect, getMyBankDetails);

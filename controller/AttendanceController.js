@@ -62,14 +62,49 @@ const resolveCheckOutStatus = (now, shift, currentStatus) => {
     return currentStatus;
 };
 
+// Haversine formula — distance in meters between two lat/lng points
+const haversineDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371000;
+    const toRad = d => d * Math.PI / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon/2)**2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
 // POST /api/attendance/checkin
 export const checkIn = async (req, res) => {
     try {
         const userId = req.user.userId;
-        const { latitude, longitude, address } = req.body;
+        const { latitude, longitude, address, faceDescriptor } = req.body;
 
-        const user = await User.findById(userId).select("companyId workShift");
+        const user = await User.findById(userId).select("companyId workShift attendanceSettings");
         if (!user) return res.status(404).json({ message: "User not found", success: false });
+
+        // ── Geofence check ──
+        const geo = user.attendanceSettings;
+        if (geo?.geofenceEnabled && geo.geofenceLocation?.latitude && latitude && longitude) {
+            const dist = haversineDistance(geo.geofenceLocation.latitude, geo.geofenceLocation.longitude, latitude, longitude);
+            if (dist > geo.geofenceRadius) {
+                return res.status(403).json({
+                    message: `You are ${Math.round(dist)}m away from the allowed location. Must be within ${geo.geofenceRadius}m.`,
+                    success: false
+                });
+            }
+        }
+
+        // ── Face recognition check ──
+        if (geo?.faceRecognitionEnabled) {
+            if (!faceDescriptor || !Array.isArray(faceDescriptor))
+                return res.status(400).json({ message: "Face scan required for check-in.", success: false });
+            if (!geo.faceDescriptor || geo.faceDescriptor.length === 0)
+                return res.status(400).json({ message: "No registered face found. Please contact admin.", success: false });
+
+            // Euclidean distance between face descriptors
+            const dist = Math.sqrt(geo.faceDescriptor.reduce((sum, v, i) => sum + (v - faceDescriptor[i]) ** 2, 0));
+            if (dist > 0.5)
+                return res.status(403).json({ message: "Face not recognized. Check-in denied.", success: false });
+        }
 
         const date = todayDate();
         const existing = await Attendance.findOne({ userId, date });
