@@ -23,43 +23,45 @@ const notifyAdmins = async (companyId, title, message) => {
     }
 };
 
-// #5 — Always return today's date in IST (UTC+5:30)
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // UTC+5:30
+
+// Always return today's date in IST
 const todayDate = () => {
-    const now = new Date();
-    const ist = new Date(now.getTime() + (5.5 * 60 * 60 * 1000));
+    const ist = new Date(Date.now() + IST_OFFSET_MS);
     return ist.toISOString().split("T")[0];
 };
 
-// #5 — Convert "HH:MM" shift time to Date object in IST timezone
+// Current time as IST Date object (for comparisons)
+const nowIST = () => new Date(Date.now() + IST_OFFSET_MS);
+
+// Convert "HH:MM" shift time string to a UTC Date representing that IST time today
 const shiftTimeToDate = (timeStr) => {
     const [h, m] = timeStr.split(":").map(Number);
-    const d = new Date();
-    // Use IST offset: UTC+5:30 = 330 minutes
-    const offset = d.getTimezoneOffset(); // minutes from UTC (negative for IST)
-    const istOffset = -330; // IST is UTC+5:30
-    const diff = istOffset - offset; // adjustment needed
-    d.setHours(h, m, 0, 0);
-    d.setMinutes(d.getMinutes() + diff); // adjust to IST
-    return d;
+    const ist = nowIST();
+    // Set hours/minutes in IST context, then convert back to UTC
+    return new Date(Date.UTC(
+        ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate(),
+        h, m, 0, 0
+    ) - IST_OFFSET_MS);
 };
 
 // Determine status based on shift rules
-const resolveCheckInStatus = (now, shift) => {
+const resolveCheckInStatus = (nowUtc, shift) => {
     if (!shift) {
-        // fallback: late after 09:30
-        const fallback = new Date(); fallback.setHours(9, 30, 0, 0);
-        return now > fallback ? "late" : "present";
+        // fallback: late after 09:30 IST
+        const fallback = shiftTimeToDate("09:30");
+        return nowUtc > fallback ? "late" : "present";
     }
     const shiftStart = shiftTimeToDate(shift.startTime);
     const allowedUntil = new Date(shiftStart.getTime() + (shift.gracePeriod + shift.lateThreshold) * 60000);
-    return now > allowedUntil ? "late" : "present";
+    return nowUtc > allowedUntil ? "late" : "present";
 };
 
-const resolveCheckOutStatus = (now, shift, currentStatus) => {
+const resolveCheckOutStatus = (nowUtc, shift, currentStatus) => {
     if (!shift) return currentStatus;
     const shiftEnd = shiftTimeToDate(shift.endTime);
     const earlyBefore = new Date(shiftEnd.getTime() - shift.earlyLeaveThreshold * 60000);
-    if (now < earlyBefore) return "early-leave";
+    if (nowUtc < earlyBefore) return "early-leave";
     return currentStatus;
 };
 
@@ -113,7 +115,7 @@ export const checkIn = async (req, res) => {
         const date = todayDate();
         const existing = await Attendance.findOne({ userId, date });
         const shift = user.workShift ? await WorkShift.findById(user.workShift) : null;
-        const now = new Date();
+        const now = new Date(); // UTC — stored in DB as UTC, displayed correctly via toLocaleTimeString
 
         if (existing) {
             // Allow re-check-in only if last punch has a checkout
@@ -131,8 +133,7 @@ export const checkIn = async (req, res) => {
                 .populate("workShiftId", "name startTime endTime")
                 .populate("createdBy", "firstName lastName");
 
-            const checkInTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
-            await createNotification({ userId, title: "Check-In Recorded", message: `Re-checked in at ${checkInTime}.`, type: "attendance", link: "/attendance", createdBy: userId });
+        const checkInTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });, type: "attendance", link: "/attendance", createdBy: userId });
             await notifyAdmins(user.companyId, "User Checked In", `${populated.createdBy.firstName} ${populated.createdBy.lastName} re-checked in at ${checkInTime}.`);
             return res.status(200).json({ message: "Re-checked in successfully", attendance: populated, success: true });
         }
@@ -154,8 +155,7 @@ export const checkIn = async (req, res) => {
             .populate("workShiftId", "name startTime endTime")
             .populate("createdBy", "firstName lastName");
 
-        const checkInTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
-        await createNotification({ userId, title: "Check-In Recorded", message: `You checked in at ${checkInTime}. Status: ${status}.`, type: "attendance", link: "/attendance", createdBy: userId });
+        const checkInTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });, type: "attendance", link: "/attendance", createdBy: userId });
         await notifyAdmins(user.companyId, "User Checked In", `${populated.createdBy.firstName} ${populated.createdBy.lastName} checked in at ${checkInTime}. Status: ${status}.`);
 
         res.status(201).json({ message: "Checked in successfully", attendance: populated, success: true });
@@ -209,7 +209,7 @@ export const checkOut = async (req, res) => {
             .populate("workShiftId", "name startTime endTime")
             .populate("createdBy", "firstName lastName");
 
-        const checkOutTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+        const checkOutTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
         await createNotification({ userId, title: "Check-Out Recorded", message: `You checked out at ${checkOutTime}. Total hours: ${totalWorkHours}h. Status: ${status}.`, type: "attendance", link: "/attendance", createdBy: userId });
         await notifyAdmins(populated.companyId, "User Checked Out", `${populated.createdBy.firstName} ${populated.createdBy.lastName} checked out at ${checkOutTime}. Total hours: ${totalWorkHours}h.`);
 
