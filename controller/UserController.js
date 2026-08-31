@@ -276,25 +276,37 @@ export const getAllUsers = async (req, res) => {
 
 export const updateUserProfile = async (req, res) => {
     try {
-        const { firstName, lastName, phone, password, gender, employeeCode, joiningDate, dateOfBirth, aadharDateOfBirth, department, designation, workShift, employmentStatus, reportingTo, address } = req.body;
+        const { firstName, lastName, email, phone, password, gender, employeeCode, joiningDate, dateOfBirth, aadharDateOfBirth, department, designation, workShift, employmentStatus, reportingTo, address } = req.body;
         const profilePic = req.file ? await uploadToCloudinary(req.file, "digicoders/hrmsv2/profiles") : null;
         const user = await User.findById(req.user.userId);
         if (!user) return res.status(404).json({ message: "User not found", success: false });
 
-        if (firstName) user.firstName = firstName;
-        if (lastName) user.lastName = lastName;
-        if (phone) user.phone = phone;
-        if (address !== undefined) user.address = address;
-        if (gender) user.gender = gender;
-        if (employeeCode) user.employeeCode = employeeCode;
-        if (joiningDate) user.joiningDate = normalizeDate(joiningDate);
-        if (dateOfBirth) user.dateOfBirth = normalizeDate(dateOfBirth);
-        if (aadharDateOfBirth) user.aadharDateOfBirth = normalizeDate(aadharDateOfBirth);
-        if (department) user.department = department;
-        if (designation) user.designation = designation;
-        if (workShift) user.workShift = workShift;
-        if (employmentStatus) user.employmentStatus = employmentStatus;
-        if (reportingTo) user.reportingTo = reportingTo;
+        if (email !== undefined) {
+            const cleanEmail = email.toLowerCase().trim();
+            if (!cleanEmail) {
+                return res.status(400).json({ message: "Email is required", success: false });
+            }
+            if (cleanEmail !== user.email) {
+                const existing = await User.findOne({ email: cleanEmail, _id: { $ne: user._id } });
+                if (existing) return res.status(409).json({ message: "Email is already registered with another account.", success: false });
+                user.email = cleanEmail;
+            }
+        }
+
+        if (firstName !== undefined) user.firstName = firstName.trim();
+        if (lastName !== undefined) user.lastName = lastName.trim();
+        if (phone !== undefined) user.phone = phone ? phone.trim() : null;
+        if (address !== undefined) user.address = address ? address.trim() : null;
+        if (gender !== undefined) user.gender = gender || null;
+        if (employeeCode !== undefined) user.employeeCode = employeeCode ? employeeCode.trim() : null;
+        if (joiningDate !== undefined) user.joiningDate = normalizeDate(joiningDate);
+        if (dateOfBirth !== undefined) user.dateOfBirth = normalizeDate(dateOfBirth);
+        if (aadharDateOfBirth !== undefined) user.aadharDateOfBirth = normalizeDate(aadharDateOfBirth);
+        if (department !== undefined) user.department = department || null;
+        if (designation !== undefined) user.designation = designation || null;
+        if (workShift !== undefined) user.workShift = workShift || null;
+        if (employmentStatus !== undefined) user.employmentStatus = employmentStatus || null;
+        if (reportingTo !== undefined) user.reportingTo = reportingTo || null;
         if (password) user.password = await bcrypt.hash(password, 10);
         if (profilePic) {
             if (user.profilePic?.publicId) await cloudinary.uploader.destroy(user.profilePic.publicId, { resource_type: "image" }).catch(() => {});
@@ -313,32 +325,48 @@ export const updateUserProfile = async (req, res) => {
         res.status(200).json({ message: "Profile updated successfully", success: true });
     } catch (error) {
         console.error("UPDATE PROFILE ERROR:", error);
+        if (error.code === 11000) {
+            const field = Object.keys(error.keyPattern || {})[0] || "Field";
+            return res.status(409).json({ message: `${field} already exists. Please use a different value.`, success: false });
+        }
         res.status(500).json({ message: error.message || "Error updating profile", success: false });
     }
 };
 
 export const adminUpdateUser = async (req, res) => {
     try {
-        const { firstName, lastName, phone, role, gender, employeeCode, joiningDate, dateOfBirth, aadharDateOfBirth, companyId, workShift, reportingTo, employmentStatus, department, designation, address } = req.body;
+        const { firstName, lastName, email, phone, role, gender, employeeCode, joiningDate, dateOfBirth, aadharDateOfBirth, companyId, workShift, reportingTo, employmentStatus, department, designation, address } = req.body;
         const user = await User.findById(req.params.id);
         if (!user) return res.status(404).json({ message: "User not found", success: false });
 
-        if (firstName) user.firstName = firstName;
-        if (lastName) user.lastName = lastName;
-        if (phone) user.phone = phone;
-        if (address !== undefined) user.address = address;
+        if (email !== undefined) {
+            const cleanEmail = email.toLowerCase().trim();
+            if (!cleanEmail) {
+                return res.status(400).json({ message: "Email is required", success: false });
+            }
+            if (cleanEmail !== user.email) {
+                const existing = await User.findOne({ email: cleanEmail, _id: { $ne: user._id } });
+                if (existing) return res.status(409).json({ message: "Email is already registered with another account.", success: false });
+                user.email = cleanEmail;
+            }
+        }
+
+        if (firstName !== undefined) user.firstName = firstName.trim();
+        if (lastName !== undefined) user.lastName = lastName.trim();
+        if (phone !== undefined) user.phone = phone ? phone.trim() : null;
+        if (address !== undefined) user.address = address ? address.trim() : null;
         if (role) user.role = role;
-        if (gender) user.gender = gender;
-        if (employeeCode) user.employeeCode = employeeCode;
+        if (gender !== undefined) user.gender = gender || null;
+        if (employeeCode !== undefined) user.employeeCode = employeeCode ? employeeCode.trim() : null;
         if (companyId) user.companyId = companyId;
-        if (workShift) user.workShift = workShift;
-        if (employmentStatus) user.employmentStatus = employmentStatus;
-        if (department) user.department = department;
-        if (designation) user.designation = designation;
+        if (workShift !== undefined) user.workShift = workShift || null;
+        if (employmentStatus !== undefined) user.employmentStatus = employmentStatus || null;
+        if (department !== undefined) user.department = department || null;
+        if (designation !== undefined) user.designation = designation || null;
         if (reportingTo !== undefined) user.reportingTo = reportingTo || null;
-        if (joiningDate) user.joiningDate = normalizeDate(joiningDate);
-        if (dateOfBirth) user.dateOfBirth = normalizeDate(dateOfBirth);
-        if (aadharDateOfBirth) user.aadharDateOfBirth = normalizeDate(aadharDateOfBirth);
+        if (joiningDate !== undefined) user.joiningDate = normalizeDate(joiningDate);
+        if (dateOfBirth !== undefined) user.dateOfBirth = normalizeDate(dateOfBirth);
+        if (aadharDateOfBirth !== undefined) user.aadharDateOfBirth = normalizeDate(aadharDateOfBirth);
         if (req.body.attendanceSettings !== undefined) {
             const as = typeof req.body.attendanceSettings === "string"
                 ? JSON.parse(req.body.attendanceSettings)
@@ -368,6 +396,10 @@ export const adminUpdateUser = async (req, res) => {
         });
     } catch (error) {
         console.error("ADMIN UPDATE USER ERROR:", error);
+        if (error.code === 11000) {
+            const field = Object.keys(error.keyPattern || {})[0] || "Field";
+            return res.status(409).json({ message: `${field} already exists. Please use a different value.`, success: false });
+        }
         res.status(500).json({ message: error.message || "Error updating user", success: false });
     }
 };
