@@ -70,9 +70,8 @@ export const deleteBranch = async (req, res) => {
     try {
         const branch = await Branch.findByIdAndDelete(req.params.id);
         if (!branch) return res.status(404).json({ message: "Branch not found", success: false });
-        // Remove branch from all users
-        await User.updateMany({ branch: req.params.id }, { $set: { branch: null } });
-        res.status(200).json({ message: "Branch deleted successfully", success: true });
+        const { modifiedCount } = await User.updateMany({ branch: req.params.id }, { $set: { branch: null } });
+        res.status(200).json({ message: "Branch deleted successfully", affectedEmployees: modifiedCount, success: true });
     } catch (error) {
         res.status(500).json({ message: error.message, success: false });
     }

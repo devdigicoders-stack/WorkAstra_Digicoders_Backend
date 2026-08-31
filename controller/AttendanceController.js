@@ -85,7 +85,7 @@ export const checkIn = async (req, res) => {
         // ── Geofence check (Branch level) ──
         if (latitude && longitude) {
             const branch = user.branch ? await Branch.findById(user.branch) : null;
-            if (branch?.location?.latitude) {
+            if (branch?.isActive && branch?.location?.latitude) {
                 const dist = haversineDistance(branch.location.latitude, branch.location.longitude, latitude, longitude);
                 if (dist > branch.geofenceRadius) {
                     return res.status(403).json({
