@@ -133,7 +133,8 @@ export const checkIn = async (req, res) => {
                 .populate("workShiftId", "name startTime endTime")
                 .populate("createdBy", "firstName lastName");
 
-        const checkInTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });, type: "attendance", link: "/attendance", createdBy: userId });
+        const checkInTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
+            await createNotification({ userId, title: "Check-In Recorded", message: `You re-checked in at ${checkInTime}.`, type: "attendance", link: "/attendance", createdBy: userId });
             await notifyAdmins(user.companyId, "User Checked In", `${populated.createdBy.firstName} ${populated.createdBy.lastName} re-checked in at ${checkInTime}.`);
             return res.status(200).json({ message: "Re-checked in successfully", attendance: populated, success: true });
         }
@@ -155,7 +156,8 @@ export const checkIn = async (req, res) => {
             .populate("workShiftId", "name startTime endTime")
             .populate("createdBy", "firstName lastName");
 
-        const checkInTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });, type: "attendance", link: "/attendance", createdBy: userId });
+        const checkInTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
+        await createNotification({ userId, title: "Check-In Recorded", message: `You checked in at ${checkInTime}. Status: ${status}.`, type: "attendance", link: "/attendance", createdBy: userId });
         await notifyAdmins(user.companyId, "User Checked In", `${populated.createdBy.firstName} ${populated.createdBy.lastName} checked in at ${checkInTime}. Status: ${status}.`);
 
         res.status(201).json({ message: "Checked in successfully", attendance: populated, success: true });
