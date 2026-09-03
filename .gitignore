@@ -24,3 +24,9 @@ dist-ssr
 *.sln
 *.sw?
 firebase-service-account.json
+
+# Uploads and temporary generated files
+uploads/
+*.pdf
+*.png
+!templates/assets/*.png

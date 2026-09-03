@@ -120,7 +120,7 @@ export const getAllNdas = async (req, res) => {
 export const signNda = async (req, res) => {
     try {
         const { ndaId } = req.params;
-        const { signatureBase64 } = req.body;
+        const { signatureBase64, employeeDetails, witnessDetails } = req.body;
 
         if (!signatureBase64) {
             return res.status(400).json({ message: "Signature is required", success: false });
@@ -136,87 +136,203 @@ export const signNda = async (req, res) => {
         const nda = await Nda.findById(ndaId);
         if (!nda) return res.status(404).json({ message: "NDA not found", success: false });
 
+        // Fetch User and details
+        const user = await User.findById(req.user.userId)
+            .populate('designation', 'name title')
+            .populate('department', 'name title');
+
+        const empData = {
+            fullName: employeeDetails?.fullName || `${user?.firstName || ''} ${user?.lastName || ''}`.trim(),
+            fatherName: employeeDetails?.fatherName || '',
+            employeeId: employeeDetails?.employeeId || user?.employeeCode || `EMP-${user?._id?.toString().slice(-4)}`,
+            designation: employeeDetails?.designation || user?.designation?.name || user?.designation?.title || 'Employee',
+            phone: employeeDetails?.phone || user?.phone || '',
+            email: employeeDetails?.email || user?.email || '',
+            address: employeeDetails?.address || user?.address || ''
+        };
+
+        const witData = {
+            fullName: witnessDetails?.fullName || '',
+            address: witnessDetails?.address || '',
+            phone: witnessDetails?.phone || '',
+            role: witnessDetails?.role || '',
+            signatureBase64: witnessDetails?.signatureBase64 || null
+        };
+
         let signedDocumentUrl = "";
 
-        // Attempt to stamp the signature if there is a document
-        if (nda.document && nda.document.url) {
-            try {
-                // 1. Download original document as array buffer
+        try {
+            // Load base NDA template
+            let docBytes;
+            const localTemplatePath = path.join(__dirname, '../templates/Employee_NDA_DigiCoders.pdf');
+            if (fs.existsSync(localTemplatePath)) {
+                docBytes = fs.readFileSync(localTemplatePath);
+            } else if (nda.document && nda.document.url) {
                 const docResponse = await axios.get(nda.document.url, { responseType: 'arraybuffer' });
-                const docBytes = docResponse.data;
-
-                // 2. Try to load as PDF
-                let pdfDoc;
-                try {
-                    pdfDoc = await PDFDocument.load(docBytes);
-                } catch (pdfErr) {
-                    console.log("Not a valid PDF, cannot stamp.");
-                }
-
-                if (pdfDoc) {
-                    // 3. Convert Base64 Signature to Image
-                    const signatureImageBytes = Buffer.from(signatureBase64.split(',')[1], 'base64');
-                    const signatureImage = await pdfDoc.embedPng(signatureImageBytes);
-
-                    // 4. Draw Signature on ALL pages
-                    const pages = pdfDoc.getPages();
-                    
-                    // Scale image down
-                    const sigDims = signatureImage.scale(0.3);
-                    
-                    pages.forEach((page) => {
-                        const { width } = page.getSize();
-                        page.drawImage(signatureImage, {
-                            x: width - sigDims.width - 50, // Right side with 50px padding
-                            y: 50,
-                            width: sigDims.width,
-                            height: sigDims.height,
-                        });
-                    });
-
-                    // 5. Save the new PDF to a buffer
-                    const modifiedPdfBytes = await pdfDoc.save();
-                    const modifiedPdfBuffer = Buffer.from(modifiedPdfBytes);
-
-                    // 6. Save new signed PDF to Local Uploads Folder
-                    const signedDir = path.join(__dirname, '../uploads/ndas/signed');
-                    if (!fs.existsSync(signedDir)) fs.mkdirSync(signedDir, { recursive: true });
-                    
-                    const filename = `signed_nda_${ndaId}_${req.user.userId}_${Date.now()}.pdf`;
-                    const filePath = path.join(signedDir, filename);
-                    fs.writeFileSync(filePath, modifiedPdfBuffer);
-                    
-                    signedDocumentUrl = `${req.protocol}://${req.get('host')}/uploads/ndas/signed/${filename}`;
-                }
-            } catch (err) {
-                console.error("PDF Stamping Error:", err);
-                return res.status(500).json({ message: "Error stamping signature on document. Please ensure the uploaded file is a valid PDF.", success: false });
+                docBytes = docResponse.data;
             }
+
+            if (docBytes) {
+                const { PDFDocument, rgb, StandardFonts } = await import('pdf-lib');
+                const pdfDoc = await PDFDocument.load(docBytes);
+                const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+                const pages = pdfDoc.getPages();
+                const now = new Date();
+                const dayStr = String(now.getDate()).padStart(2, '0');
+                const monthName = now.toLocaleString('en-US', { month: 'long' });
+                const monthNum = String(now.getMonth() + 1).padStart(2, '0');
+                const yearShort = String(now.getFullYear()).slice(-2);
+
+                // --- 1. STAMP PAGE 1 ---
+                if (pages.length > 0) {
+                    const page1 = pages[0];
+
+                    const inkColor = rgb(0.05, 0.15, 0.4);
+
+                    // Date Header
+                    page1.drawText(dayStr, { x: 200, y: 665.3, size: 8.5, font, color: inkColor });
+                    page1.drawText(monthName, { x: 247, y: 665.3, size: 8.5, font, color: inkColor });
+                    page1.drawText(yearShort, { x: 312, y: 665.3, size: 8.5, font, color: inkColor });
+
+                    // Employee Profile Details
+                    page1.drawText(empData.fullName, { x: 116, y: 561.8, size: 8.5, font, color: inkColor });
+                    if (empData.fatherName) {
+                        page1.drawText(empData.fatherName, { x: 334, y: 561.8, size: 8.5, font, color: inkColor });
+                    }
+                    page1.drawText(empData.employeeId, { x: 145, y: 542.6, size: 8.5, font, color: inkColor });
+                    page1.drawText(empData.designation, { x: 364, y: 542.6, size: 8.5, font, color: inkColor });
+                    page1.drawText(empData.phone, { x: 135, y: 523.2, size: 8.5, font, color: inkColor });
+                    page1.drawText(empData.email, { x: 346, y: 523.2, size: 8.5, font, color: inkColor });
+                    
+                    const addrFontSize = empData.address.length > 50 ? 7 : 8;
+                    page1.drawText(empData.address, { x: 120, y: 504.0, size: addrFontSize, font, color: inkColor });
+                }
+
+                // --- 2. STAMP PAGE 9 (OR LAST PAGE) ---
+                const pageLast = pages.length >= 9 ? pages[8] : pages[pages.length - 1];
+                const inkColor = rgb(0.05, 0.15, 0.4);
+
+                // Embed Company Seal & Gopal Sir Signature
+                const stampPath = path.join(__dirname, '../templates/assets/digicodersstamp.png');
+                const gopalSignPath = path.join(__dirname, '../templates/assets/gopalsirsign.png');
+
+                if (fs.existsSync(gopalSignPath)) {
+                    const gopalBytes = fs.readFileSync(gopalSignPath);
+                    const gopalImage = await pdfDoc.embedPng(gopalBytes);
+                    pageLast.drawImage(gopalImage, { x: 135, y: 492, width: 70, height: 26 });
+                }
+                // Gopal Sir Date
+                pageLast.drawText(dayStr, { x: 104, y: 472.1, size: 8.5, font, color: inkColor });
+                pageLast.drawText(monthNum, { x: 138, y: 472.1, size: 8.5, font, color: inkColor });
+                pageLast.drawText(yearShort, { x: 178, y: 472.1, size: 8.5, font, color: inkColor });
+
+                if (fs.existsSync(stampPath)) {
+                    const stampBytes = fs.readFileSync(stampPath);
+                    const stampImage = await pdfDoc.embedPng(stampBytes);
+                    pageLast.drawImage(stampImage, { x: 155, y: 375, width: 52, height: 52 });
+                }
+
+                // Left Column: Employee Details
+                pageLast.drawText(empData.fullName, { x: 128, y: 329.8, size: 8.5, font, color: inkColor });
+                pageLast.drawText(empData.employeeId, { x: 145, y: 310.3, size: 8.5, font, color: inkColor });
+                pageLast.drawText(empData.designation, { x: 139, y: 291.1, size: 8.5, font, color: inkColor });
+                pageLast.drawText(empData.phone, { x: 153, y: 271.7, size: 8.5, font, color: inkColor });
+                pageLast.drawText(empData.email, { x: 151, y: 252.2, size: 8.5, font, color: inkColor });
+                const leftAddrSize = empData.address.length > 35 ? 7 : 8;
+                pageLast.drawText(empData.address, { x: 122, y: 233.0, size: leftAddrSize, font, color: inkColor });
+
+                // Left Column: Employee Signature
+                if (signatureBase64) {
+                    const empSignBase64 = signatureBase64.includes('base64,') ? signatureBase64.split('base64,')[1] : signatureBase64;
+                    const empSignBytes = Buffer.from(empSignBase64, 'base64');
+                    const empSignImage = await pdfDoc.embedPng(empSignBytes);
+                    pageLast.drawImage(empSignImage, { x: 135, y: 177, width: 70, height: 26 });
+                }
+
+                // Left Column: Employee Date
+                pageLast.drawText(dayStr, { x: 104, y: 155.5, size: 8.5, font, color: inkColor });
+                pageLast.drawText(monthNum, { x: 138, y: 155.5, size: 8.5, font, color: inkColor });
+                pageLast.drawText(yearShort, { x: 178, y: 155.5, size: 8.5, font, color: inkColor });
+
+                // Right Column: Witness Details
+                if (witData.fullName) {
+                    pageLast.drawText(witData.fullName, { x: 352, y: 329.8, size: 8.5, font, color: inkColor });
+                }
+                if (witData.address) {
+                    const witAddrSize = witData.address.length > 30 ? 7 : 8;
+                    pageLast.drawText(witData.address, { x: 362, y: 310.3, size: witAddrSize, font, color: inkColor });
+                }
+                if (witData.phone) {
+                    pageLast.drawText(witData.phone, { x: 393, y: 291.1, size: 8.5, font, color: inkColor });
+                }
+                if (witData.role) {
+                    pageLast.drawText(witData.role, { x: 315, y: 252.2, size: 8.5, font, color: inkColor });
+                }
+
+                // Right Column: Witness Signature & Date
+                // Witness Signature
+                if (witData.signatureBase64) {
+                    try {
+                        const witSignBase64 = witData.signatureBase64.includes('base64,') ? witData.signatureBase64.split('base64,')[1] : witData.signatureBase64;
+                        const witSignBytes = Buffer.from(witSignBase64, 'base64');
+                        const witSignImage = await pdfDoc.embedPng(witSignBytes);
+                        pageLast.drawImage(witSignImage, { x: 370, y: 188, width: 65, height: 26 });
+                    } catch (e) {
+                        pageLast.drawText(witData.fullName || 'Witness', { x: 380, y: 194.4, size: 8.5, font, color: inkColor });
+                    }
+                } else if (witData.fullName) {
+                    pageLast.drawText(witData.fullName, { x: 380, y: 194.4, size: 8.5, font, color: inkColor });
+                }
+
+                // Witness Date
+                pageLast.drawText(dayStr, { x: 345, y: 175.0, size: 8.5, font, color: inkColor });
+                pageLast.drawText(monthNum, { x: 379, y: 175.0, size: 8.5, font, color: inkColor });
+                pageLast.drawText(yearShort, { x: 419, y: 175.0, size: 8.5, font, color: inkColor });
+
+                // Save signed PDF
+                const modifiedPdfBytes = await pdfDoc.save();
+                const modifiedPdfBuffer = Buffer.from(modifiedPdfBytes);
+
+                const signedDir = path.join(__dirname, '../uploads/ndas/signed');
+                if (!fs.existsSync(signedDir)) fs.mkdirSync(signedDir, { recursive: true });
+
+                const filename = `signed_nda_${ndaId}_${req.user.userId}_${Date.now()}.pdf`;
+                const filePath = path.join(signedDir, filename);
+                fs.writeFileSync(filePath, modifiedPdfBuffer);
+
+                signedDocumentUrl = `${req.protocol}://${req.get('host')}/uploads/ndas/signed/${filename}`;
+            }
+        } catch (err) {
+            console.error("PDF Stamping Error:", err);
+            return res.status(500).json({ message: "Error stamping NDA document.", success: false });
         }
 
         const signature = new NdaSignature({
             ndaId,
             userId: req.user.userId,
             signatureBase64,
-            signedDocumentUrl
+            signedDocumentUrl,
+            employeeDetails: empData,
+            witnessDetails: witData,
+            signedAt: new Date()
         });
-        
+
         await signature.save();
 
         try {
-            const user = await User.findById(req.user.userId).select("firstName lastName companyId");
             const roles = await Role.find({ name: { $in: ["super_admin", "admin", "hr"] } }).select("_id");
             const roleIds = roles.map(r => r._id);
             const filter = { role: { $in: roleIds }, isActive: true };
             if (user?.companyId) filter.$or = [{ companyId: user.companyId }, { companyId: null }];
             const admins = await User.find(filter).select("_id");
             const adminIds = admins.map(a => a._id);
-            
+
             if (adminIds.length > 0) {
                 await createNotification({
                     userId: adminIds,
                     title: "NDA Signed ✍️",
-                    message: `${user?.firstName || 'Employee'} ${user?.lastName || ''} has signed the NDA: ${nda.title}`,
+                    message: `${empData.fullName || 'Employee'} has signed the NDA: ${nda.title}`,
                     type: "company",
                     link: "/nda",
                     createdBy: req.user.userId
@@ -226,7 +342,7 @@ export const signNda = async (req, res) => {
             console.error("Failed to notify HR/Admin for NDA", err);
         }
 
-        res.status(201).json({ message: "NDA signed successfully", success: true });
+        res.status(201).json({ message: "NDA signed successfully", signedDocumentUrl, success: true });
     } catch (error) {
         console.error("Sign NDA Error:", error);
         res.status(500).json({ message: "Error signing NDA", success: false });
