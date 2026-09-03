@@ -178,17 +178,47 @@ export const signNda = async (req, res) => {
                 const font = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
                 const pages = pdfDoc.getPages();
-                const now = new Date();
+                
+                // Use IST (Asia/Kolkata) timezone so date is always today
+                const istString = new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" });
+                const now = new Date(istString);
                 const dayStr = String(now.getDate()).padStart(2, '0');
                 const monthName = now.toLocaleString('en-US', { month: 'long' });
                 const monthNum = String(now.getMonth() + 1).padStart(2, '0');
                 const yearShort = String(now.getFullYear()).slice(-2);
 
-                // --- 1. STAMP PAGE 1 ---
+                const inkColor = rgb(0.05, 0.15, 0.4);
+
+                // Prepare Employee Signature Image
+                let empSignImage = null;
+                if (signatureBase64) {
+                    try {
+                        const empSignBase64 = signatureBase64.includes('base64,') ? signatureBase64.split('base64,')[1] : signatureBase64;
+                        const empSignBytes = Buffer.from(empSignBase64, 'base64');
+                        empSignImage = await pdfDoc.embedPng(empSignBytes);
+                    } catch (e) {
+                        console.error("Error embedding signature:", e);
+                    }
+                }
+
+                // --- 1. STAMP SIGNATURE ON EVERY PAGE CORNER (Bottom Right) ---
+                if (empSignImage) {
+                    pages.forEach((page, idx) => {
+                        // On the last page, we also place it in the signature box
+                        const { width, height } = page.getSize();
+                        // Stamp on bottom right corner with margin (width - 95, y: 15)
+                        page.drawImage(empSignImage, {
+                            x: width - 95,
+                            y: 15,
+                            width: 55,
+                            height: 20
+                        });
+                    });
+                }
+
+                // --- 2. STAMP PAGE 1 DETAILS ---
                 if (pages.length > 0) {
                     const page1 = pages[0];
-
-                    const inkColor = rgb(0.05, 0.15, 0.4);
 
                     // Date Header
                     page1.drawText(dayStr, { x: 200, y: 665.3, size: 8.5, font, color: inkColor });
@@ -209,9 +239,8 @@ export const signNda = async (req, res) => {
                     page1.drawText(empData.address, { x: 120, y: 504.0, size: addrFontSize, font, color: inkColor });
                 }
 
-                // --- 2. STAMP PAGE 9 (OR LAST PAGE) ---
+                // --- 3. STAMP PAGE 9 (OR LAST PAGE) ---
                 const pageLast = pages.length >= 9 ? pages[8] : pages[pages.length - 1];
-                const inkColor = rgb(0.05, 0.15, 0.4);
 
                 // Embed Company Seal & Gopal Sir Signature
                 const stampPath = path.join(__dirname, '../templates/assets/digicodersstamp.png');
@@ -242,11 +271,8 @@ export const signNda = async (req, res) => {
                 const leftAddrSize = empData.address.length > 35 ? 7 : 8;
                 pageLast.drawText(empData.address, { x: 122, y: 233.0, size: leftAddrSize, font, color: inkColor });
 
-                // Left Column: Employee Signature
-                if (signatureBase64) {
-                    const empSignBase64 = signatureBase64.includes('base64,') ? signatureBase64.split('base64,')[1] : signatureBase64;
-                    const empSignBytes = Buffer.from(empSignBase64, 'base64');
-                    const empSignImage = await pdfDoc.embedPng(empSignBytes);
+                // Left Column: Employee Signature Box
+                if (empSignImage) {
                     pageLast.drawImage(empSignImage, { x: 135, y: 177, width: 70, height: 26 });
                 }
 
@@ -271,7 +297,7 @@ export const signNda = async (req, res) => {
                 }
 
                 // Right Column: Witness Signature & Date
-                // Witness Signature
+                // Witness Signature Box
                 if (witData.signatureBase64) {
                     try {
                         const witSignBase64 = witData.signatureBase64.includes('base64,') ? witData.signatureBase64.split('base64,')[1] : witData.signatureBase64;
