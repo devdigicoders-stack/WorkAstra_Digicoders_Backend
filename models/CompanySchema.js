@@ -33,6 +33,10 @@ const CompanySchema = new mongoose.Schema({
     icon: {
         url:      { type: String },
         publicId: { type: String },
+    },
+    securityPin: {
+        type: String,
+        default: null
     }
 }, { timestamps: true })
 

@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node index.js",
     "seed": "node scripts/seedSuperAdmin.js",
+    "seed:pins": "node scripts/seedCompanyPins.js",
     "dev": "nodemon index.js",
     "postinstall": "node node_modules/puppeteer/install.mjs",
     "install:chrome": "npx puppeteer browsers install chrome",

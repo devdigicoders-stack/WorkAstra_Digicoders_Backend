@@ -854,3 +854,37 @@ export const registerFace = async (req, res) => {
         res.status(500).json({ message: error.message, success: false });
     }
 };
+
+// POST /api/user/verify-pin
+export const verifySecurityPin = async (req, res) => {
+    try {
+        const { pin } = req.body;
+        if (!pin) return res.status(400).json({ message: "PIN is required", success: false });
+        
+        const user = await User.findById(req.user.userId).populate("role");
+        if (!user) return res.status(404).json({ message: "User not found", success: false });
+
+        // If user is super admin, check against environment variable
+        if (user.role?.name === "super_admin") {
+            const superAdminPin = process.env.SUPER_ADMIN_PAYROLL_PIN || "706876";
+            if (pin === superAdminPin) {
+                return res.json({ message: "PIN verified", success: true });
+            } else {
+                return res.status(400).json({ message: "Invalid Security PIN", success: false });
+            }
+        }
+
+        // If normal admin/user, check against company PIN
+        if (!user.companyId) return res.status(400).json({ message: "User does not belong to a company", success: false });
+        
+        const company = await Company.findById(user.companyId);
+        if (!company || !company.securityPin) return res.status(400).json({ message: "Company Security PIN not set. Contact Super Admin.", success: false, notSet: true });
+        
+        const isMatch = await bcrypt.compare(pin, company.securityPin);
+        if (!isMatch) return res.status(400).json({ message: "Invalid Security PIN", success: false });
+        
+        res.json({ message: "PIN verified", success: true });
+    } catch (error) {
+        res.status(500).json({ message: error.message, success: false });
+    }
+};

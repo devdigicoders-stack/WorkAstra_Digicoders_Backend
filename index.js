@@ -25,6 +25,7 @@ import QuoteRoute from './route/QuoteRoute.js'
 import QuoteProfileRoute from './route/QuoteProfileRoute.js'
 import cookieParser from 'cookie-parser'
 import { startScheduler } from './utills/scheduler.js'
+import { ensureCompanyPins } from './utills/ensureCompanyPins.js'
 import startAttendanceCron from './cron/attendanceCron.js'
 import startWishesCron from './cron/wishesCron.js'
 import startReminderCron from './cron/reminderCron.js'
@@ -113,8 +114,9 @@ app.use('/api/health', (req, res) => {
 
 
 
-const server = app.listen(EnvData.PORT, () => {
-    connectdb()
+const server = app.listen(EnvData.PORT, async () => {
+    await connectdb()
+    await ensureCompanyPins()
     startScheduler()
     startAttendanceCron()
     startWishesCron()

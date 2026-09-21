@@ -365,3 +365,47 @@ export const uploadCompanyIcon = async (req, res) => {
         res.status(500).json({ message: "Internal server error", success: false });
     }
 };
+
+// PUT /api/company/change-pin
+export const changeSecurityPin = async (req, res) => {
+    try {
+        const { currentPin, newPin } = req.body;
+        if (!currentPin || !newPin || newPin.length !== 6) {
+            return res.status(400).json({ success: false, message: "Valid current PIN and a new 6-digit PIN are required" });
+        }
+
+        const user = await User.findById(req.user.userId).populate("role");
+        if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+        // Super admins cannot change their universal PIN here (it's in .env)
+        if (user.role?.name === "super_admin") {
+            return res.status(400).json({ success: false, message: "Super Admin PIN is managed via environment variables" });
+        }
+
+        if (!user.companyId) {
+            return res.status(400).json({ success: false, message: "User does not belong to any company" });
+        }
+
+        const company = await Company.findById(user.companyId);
+        if (!company) return res.status(404).json({ success: false, message: "Company not found" });
+
+        // Verify current PIN
+        if (!company.securityPin) {
+            return res.status(400).json({ success: false, message: "Company PIN is not set. Contact Super Admin." });
+        }
+        
+        const isMatch = await bcrypt.compare(currentPin, company.securityPin);
+        if (!isMatch) {
+            return res.status(400).json({ success: false, message: "Incorrect current PIN" });
+        }
+
+        // Hash and save new PIN
+        const hashedPin = await bcrypt.hash(newPin, 10);
+        company.securityPin = hashedPin;
+        await company.save();
+
+        res.json({ success: true, message: "Payroll Security PIN updated successfully!" });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};

@@ -16,12 +16,14 @@ const getAllPermissions = () =>
 
 const seed = async () => {
   try {
-    if (!process.env.MONGO_URI) {
-      throw new Error("MONGO_URI is not set in .env");
+    const databaseURL = process.env.NODE_ENV === 'development' ? process.env.MONGO_URI_DEV : process.env.MONGO_URI_PROD;
+
+    if (!databaseURL) {
+      throw new Error("MONGO_URI_DEV or MONGO_URI_PROD is not set in .env");
     }
 
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log("✅ MongoDB connected");
+    await mongoose.connect(databaseURL);
+    console.log("✅ MongoDB connected (" + process.env.NODE_ENV + " mode)");
 
     const allPermissions = getAllPermissions();
 
