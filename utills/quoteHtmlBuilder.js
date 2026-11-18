@@ -26,8 +26,8 @@ const leftWaveSvg = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg
 // Function to get the logo as base64
 const getLogoBase64 = () => {
     try {
-        const publicDir = path.join(process.cwd(), "../client/public");
-        const possibleFiles = ["logo.png", "logo1.png", "logo.jpeg", "logo.jpg"];
+        const publicDir = path.join(process.cwd(), "../../Fornted/WorkAstra_Digicoders_Frontend/public");
+        const possibleFiles = ["logo1.png", "logo.png", "logo.jpeg", "logo.jpg"];
         for (const file of possibleFiles) {
             const logoPath = path.join(publicDir, file);
             if (fs.existsSync(logoPath)) {
@@ -45,7 +45,7 @@ const getLogoBase64 = () => {
 // Function to get the local QR code as base64
 const getQrBase64 = () => {
     try {
-        const publicDir = path.join(process.cwd(), "../client/public");
+        const publicDir = path.join(process.cwd(), "../../Fornted/WorkAstra_Digicoders_Frontend/public");
         const possibleFiles = ["QR.png", "qr.png", "QR.jpeg", "qr.jpg"];
         for (const file of possibleFiles) {
             const qrPath = path.join(publicDir, file);

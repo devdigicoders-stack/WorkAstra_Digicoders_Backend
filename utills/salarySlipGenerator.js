@@ -2,17 +2,25 @@ import puppeteer from 'puppeteer';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { resolveChromeExecutable } from './offerPdfGenerator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const getBase64Image = (filename) => {
     try {
-        // Look in client/public
-        const filePath = path.join(__dirname, '..', '..', 'client', 'public', filename);
-        if (fs.existsSync(filePath)) {
-            const bitmap = fs.readFileSync(filePath);
-            return `data:image/png;base64,${bitmap.toString('base64')}`;
+        const possibleDirs = [
+            path.join(__dirname, '..', '..', 'Fornted', 'WorkAstra_Digicoders_Frontend', 'public'),
+            path.join(process.cwd(), '..', 'Fornted', 'WorkAstra_Digicoders_Frontend', 'public'),
+            path.join(__dirname, '..', '..', 'client', 'public'),
+            path.join(__dirname, '..', 'public'),
+        ];
+        for (const dir of possibleDirs) {
+            const filePath = path.join(dir, filename);
+            if (fs.existsSync(filePath)) {
+                const bitmap = fs.readFileSync(filePath);
+                return `data:image/png;base64,${bitmap.toString('base64')}`;
+            }
         }
     } catch (e) { 
         console.error('Error reading image', e); 
@@ -154,7 +162,7 @@ export const generateSalarySlipsPDF = async (user, runs) => {
 
         const getComponentAmount = (arr, nameKeywords) => {
             const comp = arr.find(c => nameKeywords.some(kw => c.name.toLowerCase().includes(kw)));
-            return comp ? comp.amount.toFixed(2) : 'NA';
+            return comp ? comp.amount.toFixed(2) : '0.00';
         };
 
         const basic = getComponentAmount(earnings, ['basic']);
@@ -235,38 +243,38 @@ export const generateSalarySlipsPDF = async (user, runs) => {
                         <tr>
                             <td class="bold">Basic</td>
                             <td class="amount-cell">${grossEarningsStr}</td>
-                            <td class="amount-cell">${basic !== 'NA' ? basic : grossEarningsStr}</td>
-                            <td class="amount-cell">NA</td>
+                            <td class="amount-cell">${basic !== '0.00' ? basic : grossEarningsStr}</td>
+                            <td class="amount-cell">0.00</td>
                         </tr>
                         <tr>
                             <td class="bold">HRA</td>
                             <td></td>
                             <td class="amount-cell">${hra}</td>
-                            <td class="amount-cell">NA</td>
+                            <td class="amount-cell">0.00</td>
                         </tr>
                         <tr>
                             <td class="bold">Conveyance Allowance</td>
                             <td></td>
                             <td class="amount-cell">${conveyance}</td>
-                            <td class="amount-cell">NA</td>
+                            <td class="amount-cell">0.00</td>
                         </tr>
                         <tr>
                             <td class="bold">Medical Allowance</td>
                             <td></td>
                             <td class="amount-cell">${medical}</td>
-                            <td class="amount-cell">NA</td>
+                            <td class="amount-cell">0.00</td>
                         </tr>
                         <tr>
                             <td class="bold">Special Allowance</td>
                             <td></td>
                             <td class="amount-cell">${special}</td>
-                            <td class="amount-cell">NA</td>
+                            <td class="amount-cell">0.00</td>
                         </tr>
                         <tr>
                             <td class="bold">Incentives</td>
                             <td></td>
                             <td class="amount-cell">${incentives}</td>
-                            <td class="amount-cell">NA</td>
+                            <td class="amount-cell">0.00</td>
                         </tr>
                         <tr>
                             <td class="bold">Amount in Rs</td>
@@ -299,8 +307,10 @@ export const generateSalarySlipsPDF = async (user, runs) => {
         </html>
     `;
 
+    const executablePath = resolveChromeExecutable();
     const browser = await puppeteer.launch({
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        ...(executablePath ? { executablePath } : {}),
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
     });
     
     const page = await browser.newPage();

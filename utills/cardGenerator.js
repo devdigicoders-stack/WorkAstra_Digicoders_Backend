@@ -2,6 +2,7 @@ import puppeteer from 'puppeteer';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { resolveChromeExecutable } from './offerPdfGenerator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,9 +24,11 @@ export const generateGreetingCard = async (user, type = 'birthday') => {
             return `/uploads/wishes/${fileName}`;
         }
 
+        const executablePath = resolveChromeExecutable();
         const browser = await puppeteer.launch({
             headless: true,
-            args: ['--no-sandbox', '--disable-setuid-sandbox']
+            ...(executablePath ? { executablePath } : {}),
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
         });
         const page = await browser.newPage();
         await page.setViewport({ width: 1200, height: 800 });

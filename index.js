@@ -54,16 +54,18 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-const allowedOrigins = EnvData.CLIENT_URL
-    ? EnvData.CLIENT_URL.split(",").map(o => o.trim())
-    : ["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "https://developmenthrms-frontend.vercel.app", "https://developmenthrms-frontend.vercel.app/"];
+const defaultOrigins = ["http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "https://developmenthrms-frontend.vercel.app"];
+const configuredOrigins = EnvData.CLIENT_URL ? EnvData.CLIENT_URL.split(",").map(o => o.trim()) : [];
+const allowedOrigins = Array.from(new Set([...defaultOrigins, ...configuredOrigins]));
 
 app.use(cors({
     origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+        if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes(origin.replace(/\/$/, ""))) {
+            return callback(null, true);
+        }
         callback(new Error("Not allowed by CORS"));
     },
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true
 }))
 

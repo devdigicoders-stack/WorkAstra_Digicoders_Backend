@@ -2,16 +2,25 @@ import puppeteer from 'puppeteer';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { resolveChromeExecutable } from './offerPdfGenerator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const getBase64Image = (filename) => {
     try {
-        const filePath = path.join(__dirname, '..', '..', 'client', 'public', filename);
-        if (fs.existsSync(filePath)) {
-            const bitmap = fs.readFileSync(filePath);
-            return `data:image/png;base64,${bitmap.toString('base64')}`;
+        const possibleDirs = [
+            path.join(__dirname, '..', '..', 'Fornted', 'WorkAstra_Digicoders_Frontend', 'public'),
+            path.join(process.cwd(), '..', 'Fornted', 'WorkAstra_Digicoders_Frontend', 'public'),
+            path.join(__dirname, '..', '..', 'client', 'public'),
+            path.join(__dirname, '..', 'public'),
+        ];
+        for (const dir of possibleDirs) {
+            const filePath = path.join(dir, filename);
+            if (fs.existsSync(filePath)) {
+                const bitmap = fs.readFileSync(filePath);
+                return `data:image/png;base64,${bitmap.toString('base64')}`;
+            }
         }
     } catch (e) { console.error('Error reading image', e); }
     return null;
@@ -204,8 +213,10 @@ export const generateExperienceLetterPDF = async (user, resignation) => {
         </html>
     `;
 
+    const executablePath = resolveChromeExecutable();
     const browser = await puppeteer.launch({
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        ...(executablePath ? { executablePath } : {}),
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
     });
 
     const page = await browser.newPage();
