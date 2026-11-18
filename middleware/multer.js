@@ -44,7 +44,7 @@ export const uploadBufferToCloudinary = async (buffer, mimetype, filename, folde
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     const localFileName = `buffer-${uniqueSuffix}.${ext}`;
     const filePath = path.join(uploadDir, localFileName);
-    
+
     fs.writeFileSync(filePath, buffer);
 
     const baseUrl = process.env.BACKEND_URL || "http://localhost:8008";
