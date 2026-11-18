@@ -30,3 +30,5 @@ uploads/
 *.pdf
 *.png
 !templates/assets/*.png
+!public/
+!public/**
