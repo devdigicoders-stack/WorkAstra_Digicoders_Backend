@@ -1,8 +1,12 @@
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { DEFAULT_PAYMENT_NOTES } from "../config/quoteBranding.js";
 import { applyQuotePlaceholders } from "../config/quoteEmailTemplates.js";
 import { defaultBranding } from "./resolveQuoteBranding.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const fmt = (n) => `₹ ${(Number(n) || 0).toLocaleString("en-IN")} /-`;
@@ -26,14 +30,21 @@ const leftWaveSvg = `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg
 // Function to get the logo as base64
 const getLogoBase64 = () => {
     try {
-        const publicDir = path.join(process.cwd(), "../../Fornted/WorkAstra_Digicoders_Frontend/public");
+        const publicDirs = [
+            path.join(__dirname, "../public"),
+            path.join(process.cwd(), "public"),
+            path.join(process.cwd(), "../../Fornted/WorkAstra_Digicoders_Frontend/public"),
+            path.join(process.cwd(), "../Fornted/WorkAstra_Digicoders_Frontend/public"),
+        ];
         const possibleFiles = ["logo1.png", "logo.png", "logo.jpeg", "logo.jpg"];
-        for (const file of possibleFiles) {
-            const logoPath = path.join(publicDir, file);
-            if (fs.existsSync(logoPath)) {
-                const ext = path.extname(logoPath).replace(".", "") || "png";
-                const mime = ext === 'jpg' || ext === 'jpeg' ? 'jpeg' : 'png';
-                return `data:image/${mime};base64,${fs.readFileSync(logoPath, "base64")}`;
+        for (const dir of publicDirs) {
+            for (const file of possibleFiles) {
+                const logoPath = path.join(dir, file);
+                if (fs.existsSync(logoPath)) {
+                    const ext = path.extname(logoPath).replace(".", "") || "png";
+                    const mime = ext === 'jpg' || ext === 'jpeg' ? 'jpeg' : 'png';
+                    return `data:image/${mime};base64,${fs.readFileSync(logoPath, "base64")}`;
+                }
             }
         }
     } catch (e) {
@@ -45,14 +56,21 @@ const getLogoBase64 = () => {
 // Function to get the local QR code as base64
 const getQrBase64 = () => {
     try {
-        const publicDir = path.join(process.cwd(), "../../Fornted/WorkAstra_Digicoders_Frontend/public");
+        const publicDirs = [
+            path.join(__dirname, "../public"),
+            path.join(process.cwd(), "public"),
+            path.join(process.cwd(), "../../Fornted/WorkAstra_Digicoders_Frontend/public"),
+            path.join(process.cwd(), "../Fornted/WorkAstra_Digicoders_Frontend/public"),
+        ];
         const possibleFiles = ["QR.png", "qr.png", "QR.jpeg", "qr.jpg"];
-        for (const file of possibleFiles) {
-            const qrPath = path.join(publicDir, file);
-            if (fs.existsSync(qrPath)) {
-                const ext = path.extname(qrPath).replace(".", "").toLowerCase();
-                const mime = ext === 'jpg' || ext === 'jpeg' ? 'jpeg' : 'png';
-                return `data:image/${mime};base64,${fs.readFileSync(qrPath, "base64")}`;
+        for (const dir of publicDirs) {
+            for (const file of possibleFiles) {
+                const qrPath = path.join(dir, file);
+                if (fs.existsSync(qrPath)) {
+                    const ext = path.extname(qrPath).replace(".", "").toLowerCase();
+                    const mime = ext === 'jpg' || ext === 'jpeg' ? 'jpeg' : 'png';
+                    return `data:image/${mime};base64,${fs.readFileSync(qrPath, "base64")}`;
+                }
             }
         }
     } catch (e) {
@@ -76,7 +94,7 @@ export const buildQuoteHtml = (quote, lead, options = {}) => {
         }
     }
     let finalQrUrl = quoteQrUrl || b.paymentQr?.url || b.paymentQrUrl || localQrUrl;
-    if (!logoUrl) logoUrl = b.logoUrl || `${baseUrl}/logo.png`;
+    if (!logoUrl) logoUrl = b.logoUrl || `${baseUrl}/logo1.png`;
     const phCtx = options.placeholderContext || null;
     const ph = (text) => esc(phCtx ? applyQuotePlaceholders(String(text), phCtx) : String(text));
 
