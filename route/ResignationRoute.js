@@ -9,7 +9,9 @@ import {
     deleteResignation,
     restoreEmployee,
     downloadExperienceLetter,
-    downloadSalarySlips
+    downloadSalarySlips,
+    getExperienceLetterData,
+    getSalarySlipsData
 } from "../controller/ResignationController.js";
 import { protect, hasPermission } from "../middleware/authMiddleware.js";
 
@@ -28,10 +30,12 @@ router.patch("/:id/clearance", protect, hasPermission("MANAGE_RESIGNATIONS"), pr
 router.delete("/:id", protect, hasPermission("MANAGE_RESIGNATIONS"), deleteResignation);
 router.patch("/:id/restore", protect, hasPermission("MANAGE_RESIGNATIONS"), restoreEmployee);
 
-// Experience Letter Download endpoint
+// Experience Letter endpoints
+router.get("/:id/experience-letter-data", protect, hasPermission("MANAGE_RESIGNATIONS"), getExperienceLetterData);
 router.get("/:id/experience-letter", protect, hasPermission("MANAGE_RESIGNATIONS"), downloadExperienceLetter);
 
-// Salary Slips Download endpoint
+// Salary Slips endpoints
+router.get("/:id/salary-slips-data", protect, hasPermission("MANAGE_RESIGNATIONS"), getSalarySlipsData);
 router.get("/:id/salary-slips", protect, hasPermission("MANAGE_RESIGNATIONS"), downloadSalarySlips);
 
 export default router;

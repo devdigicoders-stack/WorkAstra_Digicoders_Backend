@@ -310,6 +310,132 @@ export const restoreEmployee = async (req, res) => {
     }
 };
 
+// GET /api/resignations/:id/experience-letter-data
+export const getExperienceLetterData = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        const resignation = await Resignation.findById(id).populate({
+            path: 'employeeId',
+            populate: [
+                { path: 'designation' },
+                { path: 'department' },
+                { path: 'companyId' },
+                { path: 'role' }
+            ]
+        });
+
+        if (!resignation) {
+            return res.status(404).json({ message: "Resignation not found.", success: false });
+        }
+
+        if (resignation.status !== "Approved") {
+            return res.status(400).json({ message: "Experience letter can only be generated for approved resignations.", success: false });
+        }
+
+        const user = resignation.employeeId;
+        if (!user) {
+            return res.status(404).json({ message: "Employee details not found.", success: false });
+        }
+
+        return res.status(200).json({
+            success: true,
+            user,
+            resignation
+        });
+    } catch (error) {
+        console.error("GET EXPERIENCE LETTER DATA ERROR:", error);
+        return res.status(500).json({ message: "Error fetching experience letter data.", error: error.message, success: false });
+    }
+};
+
+// GET /api/resignations/:id/salary-slips-data
+export const getSalarySlipsData = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const resignation = await Resignation.findById(id).populate({
+            path: 'employeeId',
+            populate: [
+                { path: 'designation' },
+                { path: 'department' },
+                { path: 'companyId' },
+                { path: 'role' }
+            ]
+        });
+
+        if (!resignation) {
+            return res.status(404).json({ message: "Resignation record not found", success: false });
+        }
+        if (resignation.status !== "Approved") {
+            return res.status(400).json({ message: "Salary slips can only be generated for approved resignations", success: false });
+        }
+
+        const user = resignation.employeeId;
+
+        // Fetch last 3 months payroll runs for this user
+        let payrollRuns = await PayrollRun.find({ userId: user._id, status: { $in: ["approved", "paid"] } })
+                                          .sort({ month: -1 })
+                                          .limit(3)
+                                          .lean();
+
+        // If fewer than 3, generate dummies using SalaryStructure
+        if (payrollRuns.length < 3) {
+            const structure = await SalaryStructure.findOne({ userId: user._id, isActive: true }).lean();
+            if (structure) {
+                // Determine the starting month to walk backwards from
+                const endDate = resignation.approvedLastWorkingDay ? new Date(resignation.approvedLastWorkingDay) : new Date();
+                
+                let currentMonthObj = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+                
+                while (payrollRuns.length < 3) {
+                    const monthStr = `${currentMonthObj.getFullYear()}-${String(currentMonthObj.getMonth() + 1).padStart(2, '0')}`;
+                    
+                    if (!payrollRuns.find(r => r.month === monthStr)) {
+                        const components = [
+                            { name: "Basic", type: "earning", amount: structure.basic },
+                            ...(structure.components || []).map(c => ({
+                                name: c.name,
+                                type: c.type,
+                                amount: c.calcType === "percentage"
+                                    ? parseFloat(((c.value / 100) * structure.basic).toFixed(2))
+                                    : c.value,
+                            }))
+                        ];
+                        
+                        const grossEarnings = components.filter(c => c.type === "earning").reduce((s, c) => s + c.amount, 0);
+                        const totalDeductions = components.filter(c => c.type === "deduction").reduce((s, c) => s + c.amount, 0);
+                        const netSalary = grossEarnings - totalDeductions;
+                        
+                        payrollRuns.push({
+                            month: monthStr,
+                            components,
+                            grossEarnings,
+                            totalDeductions,
+                            netSalary
+                        });
+                    }
+                    
+                    // Move to previous month
+                    currentMonthObj.setMonth(currentMonthObj.getMonth() - 1);
+                }
+            }
+        }
+        
+        // Sort newest first
+        payrollRuns.sort((a, b) => b.month.localeCompare(a.month));
+
+        return res.status(200).json({
+            success: true,
+            user,
+            resignation,
+            payrollRuns
+        });
+    } catch (error) {
+        console.error("GET SALARY SLIPS DATA ERROR:", error);
+        return res.status(500).json({ message: "Error fetching salary slips data", error: error.message, success: false });
+    }
+};
+
 // GET /api/resignations/:id/experience-letter
 
 export const downloadExperienceLetter = async (req, res) => {

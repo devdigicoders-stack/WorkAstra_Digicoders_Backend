@@ -22,8 +22,8 @@ const getBase64Image = (filename) => {
                 return `data:image/png;base64,${bitmap.toString('base64')}`;
             }
         }
-    } catch (e) { 
-        console.error('Error reading image', e); 
+    } catch (e) {
+        console.error('Error reading image', e);
     }
     return null;
 };
@@ -34,7 +34,7 @@ const numberToWords = (num) => {
 
     if ((num = num.toString()).length > 9) return 'overflow';
     const n = ('000000000' + num).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
-    if (!n) return ''; 
+    if (!n) return '';
     let str = '';
     str += (n[1] != 0) ? (a[Number(n[1])] || b[n[1][0]] + ' ' + a[n[1][1]]) + 'crore ' : '';
     str += (n[2] != 0) ? (a[Number(n[2])] || b[n[2][0]] + ' ' + a[n[2][1]]) + 'lakh ' : '';
@@ -171,30 +171,28 @@ export const generateSalarySlipsPDF = async (user, runs) => {
         const medical = getComponentAmount(earnings, ['medical']);
         const special = getComponentAmount(earnings, ['special']);
         const incentives = getComponentAmount(earnings, ['incentive', 'bonus']);
-        
+
         const grossEarningsStr = run.grossEarnings > 0 ? run.grossEarnings.toFixed(2) : '0.00';
         const totalDeductionsStr = run.totalDeductions > 0 ? run.totalDeductions.toFixed(2) : '0.00';
         const netSalaryStr = run.netSalary > 0 ? run.netSalary.toFixed(2) : '0.00';
-        
+
         const words = numberToWords(Math.floor(run.netSalary));
         const netSalaryWords = words ? `${words.charAt(0).toUpperCase() + words.slice(1)} Rupees Only/-` : 'Zero Rupees Only/-';
 
         const companyLogoUrl = user.companyId?.icon?.url;
-        const localLogo = getBase64Image('logo1.png') || getBase64Image('DigiCoders Transparent Logo (2).png');
-        
+        const localLogo = getBase64Image('offerlatter.png') || getBase64Image('logo1.png') || getBase64Image('DigiCoders Transparent Logo (2).png');
+
         let logoHtml = '';
-        if (companyLogoUrl) {
-            logoHtml = `<img src="${companyLogoUrl}" style="height: 50px; margin-bottom: 10px; object-fit: contain;" />`;
-        } else if (localLogo) {
-            logoHtml = `<img src="${localLogo}" style="height: 50px; margin-bottom: 10px; object-fit: contain;" />`;
+        if (localLogo) {
+            logoHtml = `<div style="width: 100%; display: flex; justify-content: center; align-items: center; text-align: center; margin-bottom: 12px;"><img src="${localLogo}" style="height: 60px; max-width: 280px; display: block; margin: 0 auto; object-fit: contain;" /></div>`;
+        } else if (companyLogoUrl) {
+            logoHtml = `<div style="width: 100%; display: flex; justify-content: center; align-items: center; text-align: center; margin-bottom: 12px;"><img src="${companyLogoUrl}" style="height: 60px; max-width: 280px; display: block; margin: 0 auto; object-fit: contain;" /></div>`;
         } else {
-            logoHtml = `<div class="logo-text">
-                 <span class="logo-digi">${companyName.split(' ')[0]}</span><span class="logo-coders">{Company}</span>
-               </div>`;
+            logoHtml = `<h2 style="font-size: 24px; font-weight: bold; margin-bottom: 10px; text-align: center;">${companyName}</h2>`;
         }
 
         const stampImage = getBase64Image('themas.png');
-               
+
         const stampHtml = stampImage
             ? `<img src="${stampImage}" style="width: 180px; height: auto; margin-bottom: 0px; object-fit: contain;" />`
             : `<div class="stamp-placeholder">
@@ -312,16 +310,16 @@ export const generateSalarySlipsPDF = async (user, runs) => {
         ...(executablePath ? { executablePath } : {}),
         args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
     });
-    
+
     const page = await browser.newPage();
     await page.setContent(htmlContent, { waitUntil: 'networkidle0' });
-    
+
     const pdfBuffer = await page.pdf({
         format: 'A4',
         printBackground: true
     });
-    
+
     await browser.close();
-    
+
     return pdfBuffer;
 };

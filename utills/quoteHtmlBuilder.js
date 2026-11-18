@@ -1,4 +1,4 @@
- import fs from "fs";
+import fs from "fs";
 import path from "path";
 import { DEFAULT_PAYMENT_NOTES } from "../config/quoteBranding.js";
 import { applyQuotePlaceholders } from "../config/quoteEmailTemplates.js";
@@ -90,7 +90,7 @@ export const buildQuoteHtml = (quote, lead, options = {}) => {
     const tech = quote.techStack?.filter((t) => t.label) || [];
     const reqs = quote.otherRequirements?.filter((r) => r.requirement) || [];
     const chunkArray = (arr, size) => Array.from({ length: Math.ceil(arr.length / size) }, (v, i) => arr.slice(i * size, i * size + size));
-    
+
     // Modules HTML
     const modulesHtml = pages.map(page => {
         const descs = (page.descriptions || []).filter(Boolean);
@@ -176,7 +176,7 @@ export const buildQuoteHtml = (quote, lead, options = {}) => {
                         ${i === pageChunks.length - 1 ? `
                         <tr>
                             <td colspan="2" style="text-align:right; font-weight:bold; font-size:20px;">Sub Total</td>
-                            <td style="font-weight:bold; font-size:20px;">${fmt(quote.totalPagesCost + (quote.totalRequirementsCost||0))}</td>
+                            <td style="font-weight:bold; font-size:20px;">${fmt(quote.totalPagesCost + (quote.totalRequirementsCost || 0))}</td>
                         </tr>
                         <tr>
                             <td colspan="2" style="text-align:right; font-weight:bold; font-size:18px;">18% GST (Tax)</td>
@@ -222,9 +222,9 @@ export const buildQuoteHtml = (quote, lead, options = {}) => {
         <div class="content-layer">
             <h1 class="page-title" style="font-weight:bold;">Notes & Terms</h1>
             <ul style="list-style:none; padding-left:0; margin-top: 20px;">
-                ${chunk.map(line => 
-                    `<li style="margin-bottom:16px; font-size:20px; line-height:1.6; white-space:pre-wrap;">❖ ${line.trim()}</li>`
-                ).join('')}
+                ${chunk.map(line =>
+            `<li style="margin-bottom:16px; font-size:20px; line-height:1.6; white-space:pre-wrap;">❖ ${line.trim()}</li>`
+        ).join('')}
             </ul>
         </div>
     </div>
@@ -416,7 +416,7 @@ export const buildQuoteHtml = (quote, lead, options = {}) => {
                 <p style="font-size:20px; line-height:1.6; margin-bottom:12px;">❖ We accept payment in all the ways like – By Cash, By Cheque, By Bank Transfer, By UPI or DD.</p>
                 <ul style="list-style:none; padding-left: 0; margin-top: 10px;">
                     ${(quote.paymentTerms || b.paymentTerms || "Our Payment Terms are :\n1st payment installment 40% in Advance\n2nd payment installment 30% at 50% completion\n3rd Final payment 30% at delivery")
-                        .split("\n").filter(Boolean).map(line => `<li style="font-size:20px; line-height:1.6; margin-bottom: 8px;">❖ ${esc(line.replace(/^[-•*❖\s]+/, ''))}</li>`).join("")}
+            .split("\n").filter(Boolean).map(line => `<li style="font-size:20px; line-height:1.6; margin-bottom: 8px;">❖ ${esc(line.replace(/^[-•*❖\s]+/, ''))}</li>`).join("")}
                 </ul>
                 
                 <div style="margin-top: 20px;">

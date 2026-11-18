@@ -161,15 +161,13 @@ export const generateExperienceLetterPDF = async (user, resignation) => {
                 <div class="logo-container">
                     ${(() => {
                         const companyLogoUrl = user.companyId?.icon?.url;
-                        const localLogo = getBase64Image('logo1.png') || getBase64Image('DigiCoders Transparent Logo (2).png');
-                        if (companyLogoUrl) {
-                            return `<img src="${companyLogoUrl}" style="height: 50px; margin-bottom: 10px; object-fit: contain;" />`;
-                        } else if (localLogo) {
-                            return `<img src="${localLogo}" style="height: 50px; margin-bottom: 10px; object-fit: contain;" />`;
+                        const localLogo = getBase64Image('offerlatter.png') || getBase64Image('logo1.png') || getBase64Image('DigiCoders Transparent Logo (2).png');
+                        if (localLogo) {
+                            return `<div style="width: 100%; display: flex; justify-content: center; align-items: center; text-align: center; margin-bottom: 12px;"><img src="${localLogo}" style="height: 60px; max-width: 280px; display: block; margin: 0 auto; object-fit: contain;" /></div>`;
+                        } else if (companyLogoUrl) {
+                            return `<div style="width: 100%; display: flex; justify-content: center; align-items: center; text-align: center; margin-bottom: 12px;"><img src="${companyLogoUrl}" style="height: 60px; max-width: 280px; display: block; margin: 0 auto; object-fit: contain;" /></div>`;
                         } else {
-                            return `<div class="logo-text">
-                                 <span class="logo-digi">${companyName.split(' ')[0]}</span><span class="logo-coders">{Company}</span>
-                               </div>`;
+                            return `<h2 style="font-size: 24px; font-weight: bold; margin-bottom: 10px; text-align: center;">${companyName}</h2>`;
                         }
                     })()}
                 </div>
