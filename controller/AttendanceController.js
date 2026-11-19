@@ -25,6 +25,32 @@ const notifyAdmins = async (companyId, title, message) => {
 
 const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // UTC+5:30
 
+// Helper to parse date/time string as IST (+05:30) and return Date object in UTC
+export const parseDateTimeIST = (dateStr, timeStr) => {
+    if (!dateStr || !timeStr) return null;
+    let t = timeStr.trim();
+    if (t.includes("Z") || /[+-]\d{2}/.test(t)) {
+        return new Date(t.includes("T") ? t : `${dateStr}T${t}`);
+    }
+    if (t.length === 5) t += ":00";
+    return new Date(`${dateStr}T${t}+05:30`);
+};
+
+export const parseISTDate = (str) => {
+    if (!str) return null;
+    let s = str.trim();
+    if (s.includes("Z") || /[+-]\d{2}:\d{2}$/.test(s)) {
+        return new Date(s);
+    }
+    if (s.includes("T")) {
+        const [datePart, timePart] = s.split("T");
+        let t = timePart || "";
+        if (t.length === 5) t += ":00";
+        return new Date(`${datePart}T${t}+05:30`);
+    }
+    return new Date(s);
+};
+
 // Always return today's date in IST
 const todayDate = () => {
     const ist = new Date(Date.now() + IST_OFFSET_MS);
@@ -285,14 +311,23 @@ export const manualPunch = async (req, res) => {
         const attendance = await Attendance.findById(req.params.id);
         if (!attendance) return res.status(404).json({ message: "Attendance record not found", success: false });
 
-        if (ci) attendance.checkIn = new Date(ci);
-        if (co) attendance.checkOut = new Date(co);
+        if (ci) attendance.checkIn = parseISTDate(ci);
+        if (co) attendance.checkOut = parseISTDate(co);
         if (status) attendance.status = status;
         if (note) attendance.note = note;
         if (attendance.checkIn && attendance.checkOut) {
             const diff = new Date(attendance.checkOut) - new Date(attendance.checkIn);
             attendance.workHours = parseFloat((diff / 3600000).toFixed(2));
         }
+
+        if (attendance.punches && attendance.punches.length > 0) {
+            if (attendance.checkIn) attendance.punches[0].checkIn = attendance.checkIn;
+            if (attendance.checkOut) attendance.punches[0].checkOut = attendance.checkOut;
+            if (attendance.workHours) attendance.punches[0].workHours = attendance.workHours;
+        } else if (attendance.checkIn) {
+            attendance.punches = [{ checkIn: attendance.checkIn, checkOut: attendance.checkOut || undefined, workHours: attendance.workHours || 0 }];
+        }
+
         attendance.isRegularized = true;
         attendance.updatedBy = req.user.userId;
         await attendance.save();
@@ -316,8 +351,8 @@ export const adminCreatePunch = async (req, res) => {
         const existing = await Attendance.findOne({ userId, date });
         if (existing) return res.status(400).json({ message: "Attendance record already exists for this date. Use manual punch to update.", success: false });
 
-        const checkInDate = ci ? new Date(`${date}T${ci}:00`) : null;
-        const checkOutDate = co ? new Date(`${date}T${co}:00`) : null;
+        const checkInDate = parseDateTimeIST(date, ci);
+        const checkOutDate = parseDateTimeIST(date, co);
         let workHours = 0;
         if (checkInDate && checkOutDate) {
             workHours = parseFloat(((checkOutDate - checkInDate) / 3600000).toFixed(2));
@@ -326,6 +361,7 @@ export const adminCreatePunch = async (req, res) => {
         const attendance = await Attendance.create({
             userId, companyId: u.companyId, workShiftId: u.workShift || null,
             date, checkIn: checkInDate, checkOut: checkOutDate,
+            punches: checkInDate ? [{ checkIn: checkInDate, checkOut: checkOutDate || undefined, workHours }] : [],
             workHours, status: status || "present", note,
             isRegularized: true, createdBy: req.user.userId, updatedBy: req.user.userId,
         });

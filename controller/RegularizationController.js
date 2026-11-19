@@ -3,6 +3,7 @@ import Attendance from "../models/AttendanceSchema.js";
 import User from "../models/UserSchema.js";
 import { createNotification } from "../utills/notificationHelper.js";
 import { getSubordinateIds } from "../utills/hierarchyHelper.js";
+import { parseDateTimeIST } from "./AttendanceController.js";
 
 // POST /api/regularization
 export const requestRegularization = async (req, res) => {
@@ -129,8 +130,8 @@ export const approveRegularization = async (req, res) => {
         if (!reg) return res.status(404).json({ message: "Request not found", success: false });
         if (reg.status !== "pending") return res.status(400).json({ message: "Request is not pending", success: false });
 
-        const checkInDate  = reg.requestedCheckIn  ? new Date(`${reg.date}T${reg.requestedCheckIn}:00`)  : null;
-        const checkOutDate = reg.requestedCheckOut ? new Date(`${reg.date}T${reg.requestedCheckOut}:00`) : null;
+        const checkInDate  = parseDateTimeIST(reg.date, reg.requestedCheckIn);
+        const checkOutDate = parseDateTimeIST(reg.date, reg.requestedCheckOut);
         const workHours = (checkInDate && checkOutDate)
             ? parseFloat(((checkOutDate - checkInDate) / 3600000).toFixed(2))
             : 0;
