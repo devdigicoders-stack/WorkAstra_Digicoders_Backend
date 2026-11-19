@@ -137,7 +137,7 @@ export const createLead = async (req, res) => {
 export const updateLead = async (req, res) => {
     try {
         const FIELDS = ["contactNumber", "orgName", "address", "contactPerson",
-                        "email", "status", "assignedTo"];
+                        "email", "status", "assignedTo", "dealPrice"];
 
         const $set = { updatedBy: req.user.userId };
         FIELDS.forEach(f => { if (req.body[f] !== undefined) $set[f] = req.body[f] ?? ""; });
@@ -199,22 +199,36 @@ export const updateLead = async (req, res) => {
             });
         }
 
-        // Auto-create project if status changed to "Sent to Project Team"
-        if ($set.status === "Sent to Project Team" && current.status !== "Sent to Project Team") {
+        // Auto-create project if status changed to "Sent to Project Team" or "Project Done"
+        const isDoneStatus = (s) => s === "Sent to Project Team" || s === "Project Done";
+        if ($set.status && isDoneStatus($set.status) && !isDoneStatus(current.status)) {
             const { default: Project } = await import("../models/ProjectSchema.js");
+            const priceVal = Number($set.dealPrice !== undefined ? $set.dealPrice : (lead.dealPrice || req.body.dealPrice || 0));
+
             // Check if project already exists for this lead
-            const existingProject = await Project.findOne({ leadId: lead._id });
+            let existingProject = await Project.findOne({ leadId: lead._id });
             if (!existingProject) {
                 await Project.create({
                     name: lead.orgName || `Project for ${lead.contactNumber}`,
                     description: `Automatically created from Lead: ${lead.orgName}`,
                     status: "active",
+                    price: priceVal,
                     companyId: lead.companyId || req.user.company,
                     members: [], // User requested to leave members empty for manual assignment
                     clientIds: [], // User requested to leave clients empty for manual assignment
                     leadId: lead._id,
                     createdBy: req.user.userId
                 });
+            } else if (priceVal > 0) {
+                existingProject.price = priceVal;
+                await existingProject.save();
+            }
+        } else if ($set.dealPrice !== undefined) {
+            const { default: Project } = await import("../models/ProjectSchema.js");
+            const existingProject = await Project.findOne({ leadId: lead._id });
+            if (existingProject) {
+                existingProject.price = Number($set.dealPrice) || 0;
+                await existingProject.save();
             }
         }
 

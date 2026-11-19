@@ -34,6 +34,7 @@ const ProjectSchema = new mongoose.Schema({
     name: { type: String, required: true },
     description: { type: String },
     status: { type: String, enum: ["active", "completed", "on_hold", "cancelled"], default: "active" },
+    price: { type: Number, default: 0 },
     startDate: { type: Date },
     endDate: { type: Date },
     companyId: { type: mongoose.Schema.Types.ObjectId, ref: "Company", default: null },

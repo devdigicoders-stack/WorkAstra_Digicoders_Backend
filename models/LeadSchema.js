@@ -26,6 +26,7 @@ const LeadSchema = new mongoose.Schema({
                "Sent to Project Team", "Project Done", "On Hold", "Cancelled"],
         default: "New Lead",
     },
+    dealPrice:     { type: Number, default: 0 },
     assignedTo:    { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     createdBy:     { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     updatedBy:     { type: mongoose.Schema.Types.ObjectId, ref: "User" },

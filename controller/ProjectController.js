@@ -36,13 +36,14 @@ const canEditBundle = (bundle, userId, admin) => {
 
 export const createProject = async (req, res) => {
     try {
-        const { name, description, status, startDate, endDate, members, companyId, clientIds } = req.body;
+        const { name, description, status, startDate, endDate, price, members, companyId, clientIds } = req.body;
         // Default to the main company if super_admin doesn't provide one
         const projectCompanyId = req.user.role === "super_admin" 
             ? (companyId || req.user.company || "6a4c92d17d320da930b38f01") 
             : req.user.company;
         const project = await Project.create({
             name, description, status, startDate, endDate,
+            price: Number(price) || 0,
             members: members || [],
             companyId: projectCompanyId,
             clientIds: clientIds || [],
