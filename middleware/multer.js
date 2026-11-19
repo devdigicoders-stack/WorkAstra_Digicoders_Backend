@@ -27,10 +27,10 @@ const upload = multer({
 
 export const uploadToCloudinary = async (file, folder = "local") => {
     // The file is already saved by multer diskStorage
-    const baseUrl = process.env.BACKEND_URL || "http://localhost:8008";
+    // Store only relative path — frontend will prepend VITE_BASE_URL
     return {
         name: file.originalname,
-        url: `${baseUrl}/uploads/${file.filename}`,
+        url: `/uploads/${file.filename}`,
         publicId: file.filename,
         resourceType: "local",
     };
@@ -47,9 +47,9 @@ export const uploadBufferToCloudinary = async (buffer, mimetype, filename, folde
 
     fs.writeFileSync(filePath, buffer);
 
-    const baseUrl = process.env.BACKEND_URL || "http://localhost:8008";
+    // Store only relative path — frontend will prepend VITE_BASE_URL
     return {
-        url: `${baseUrl}/uploads/${localFileName}`,
+        url: `/uploads/${localFileName}`,
         publicId: localFileName,
     };
 };
