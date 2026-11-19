@@ -1,7 +1,7 @@
 import express from "express";
 import { protect, hasPermission } from "../middleware/authMiddleware.js";
 import upload from "../middleware/multer.js";
-import { submitOnboardingForm, getPendingOnboardingRequests, approveOnboarding, rejectOnboarding, getMyOfferLetter, downloadOfferLetterPdf, downloadEmployeeOfferLetterPdf } from "../controller/OnboardingController.js";
+import { submitOnboardingForm, getPendingOnboardingRequests, approveOnboarding, rejectOnboarding, getMyOfferLetter, getUserOfferLetter, downloadOfferLetterPdf, downloadEmployeeOfferLetterPdf } from "../controller/OnboardingController.js";
 
 const router = express.Router();
 
@@ -28,6 +28,7 @@ router.get("/requests", protect, hasPermission("MANAGE_USER", "APPROVE_ONBOARDIN
 router.post("/approve/:id", protect, hasPermission("MANAGE_USER", "APPROVE_ONBOARDING"), approveOnboarding);
 router.post("/reject/:id", protect, hasPermission("MANAGE_USER", "APPROVE_ONBOARDING"), rejectOnboarding);
 router.get("/my-offer-letter", protect, getMyOfferLetter);
+router.get("/user-offer-letter/:userId", protect, hasPermission("MANAGE_USER", "APPROVE_ONBOARDING", "VIEW_USER", "VIEW_ALL_USERS", "UPDATE_USER"), getUserOfferLetter);
 router.get("/my-offer-letter/download", protect, downloadOfferLetterPdf);
 router.get("/user-offer-letter/:userId/download", protect, hasPermission("MANAGE_USER", "APPROVE_ONBOARDING", "VIEW_USER", "VIEW_ALL_USERS", "UPDATE_USER"), downloadEmployeeOfferLetterPdf);
 

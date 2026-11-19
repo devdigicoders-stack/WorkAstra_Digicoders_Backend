@@ -354,10 +354,10 @@ export const approveOnboarding = async (req, res) => {
     }
 };
 
-export const getMyOfferLetter = async (req, res) => {
+export const getUserOfferLetter = async (req, res) => {
     try {
-        const userId = req.user.userId;
-        const user = await User.findById(userId).populate("companyId");
+        const userId = req.params.userId || req.user.userId;
+        const user = await User.findById(userId).populate("companyId designation role");
         if (!user) return res.status(404).json({ message: "User not found", success: false });
 
         if (user.onboardingStatus !== "approved") {
@@ -376,16 +376,23 @@ export const getMyOfferLetter = async (req, res) => {
                 lastName: user.lastName,
                 email: user.email,
                 phone: user.phone,
-                dateOfJoining: salary.createdAt // Fallback to salary creation date as offer date
+                address: user.address,
+                designation: user.designation,
+                role: user.role,
+                dateOfJoining: user.dateOfJoining || salary.createdAt
             },
             company: user.companyId,
             ctc: salary.ctc,
             basic: salary.basic
         });
     } catch (error) {
-        console.error("Get Offer Letter Error:", error);
+        console.error("Get User Offer Letter Error:", error);
         res.status(500).json({ message: "Failed to fetch offer letter", success: false });
     }
+};
+
+export const getMyOfferLetter = async (req, res) => {
+    return getUserOfferLetter(req, res);
 };
 
 export const rejectOnboarding = async (req, res) => {
