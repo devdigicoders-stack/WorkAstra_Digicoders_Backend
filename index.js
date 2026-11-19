@@ -47,6 +47,7 @@ import PenaltyDateRoute from './route/penaltyDateRoute.js'
 
 import EnvData from './config/EnvData.js'
 const app = express();
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "10mb" }))  // raised for lead batch imports (500 rows ~150kb each)
 app.use(cookieParser())
 

@@ -41,7 +41,8 @@ export const createOrUpdateNda = async (req, res) => {
             // Delete temp file created by multer
             try { fs.unlinkSync(req.file.path); } catch (e) {}
             
-            documentUrl = `${req.protocol}://${req.get('host')}/uploads/ndas/${filename}`;
+            const proto = (req.secure || req.headers['x-forwarded-proto'] === 'https') ? 'https' : req.protocol;
+            documentUrl = `${proto}://${req.get('host')}/uploads/ndas/${filename}`;
         }
 
         let nda = null;
@@ -327,7 +328,8 @@ export const signNda = async (req, res) => {
                 const filePath = path.join(signedDir, filename);
                 fs.writeFileSync(filePath, modifiedPdfBuffer);
 
-                signedDocumentUrl = `${req.protocol}://${req.get('host')}/uploads/ndas/signed/${filename}`;
+                const proto = (req.secure || req.headers['x-forwarded-proto'] === 'https') ? 'https' : req.protocol;
+                signedDocumentUrl = `${proto}://${req.get('host')}/uploads/ndas/signed/${filename}`;
             }
         } catch (err) {
             console.error("PDF Stamping Error:", err);
@@ -522,7 +524,8 @@ export const signClientNda = async (req, res) => {
                 const filePath = path.join(signedDir, filename);
                 fs.writeFileSync(filePath, modifiedPdfBuffer);
                 
-                signedDocumentUrl = `${req.protocol}://${req.get('host')}/uploads/ndas/signed/${filename}`;
+                const proto = (req.secure || req.headers['x-forwarded-proto'] === 'https') ? 'https' : req.protocol;
+                signedDocumentUrl = `${proto}://${req.get('host')}/uploads/ndas/signed/${filename}`;
             } catch (pdfErr) {
                 console.error("PDF Stamping Error:", pdfErr);
             }
@@ -603,8 +606,13 @@ export const getClientNdaTemplate = async (req, res) => {
         if (!clientNda) {
             return res.status(200).json({ nda: null, message: "No active Client NDA found", success: true });
         }
+
+        const ndaObj = clientNda.toObject ? clientNda.toObject() : { ...clientNda };
+        if (ndaObj.document?.url && ndaObj.document.url.startsWith("http://") && !ndaObj.document.url.includes("localhost")) {
+            ndaObj.document.url = ndaObj.document.url.replace(/^http:\/\//i, "https://");
+        }
         
-        res.status(200).json({ nda: clientNda, success: true });
+        res.status(200).json({ nda: ndaObj, success: true });
     } catch (error) {
         console.error("Get Client NDA Template Error:", error);
         res.status(500).json({ message: "Error fetching Client NDA template", success: false });
