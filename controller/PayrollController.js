@@ -83,8 +83,8 @@ export const generatePayroll = async (req, res) => {
                     }
                 }
 
-                // Get active salary structure
-                const structure = await SalaryStructure.findOne({ userId: emp._id, isActive: true });
+                // Get active salary structure (latest effective)
+                const structure = await SalaryStructure.findOne({ userId: emp._id, isActive: true }).sort({ effectiveFrom: -1, createdAt: -1 });
                 if (!structure) { results.skipped++; results.skippedReasons = results.skippedReasons || []; results.skippedReasons.push({ userId: emp._id, reason: "No active salary structure" }); continue; }
 
                 // Get week-off from work shift
@@ -147,8 +147,10 @@ export const generatePayroll = async (req, res) => {
                 const [yr, mn] = month.split("-").map(Number);
                 const calendarDays = new Date(yr, mn, 0).getDate(); // 28/29/30/31
 
-                // Compute salary components
-                const grossForCalc = structure.grossEarnings > 0 ? structure.grossEarnings : structure.basic;
+                // Compute salary components: priority -> grossEarnings > ctc > basic
+                const grossForCalc = structure.grossEarnings > 0 
+                    ? structure.grossEarnings 
+                    : (structure.ctc > 0 ? structure.ctc : structure.basic);
                 const perDaySalary = grossForCalc / calendarDays;  // ÷ 30 or 31
                 
                 let lopDeduction = parseFloat((lopDays * perDaySalary).toFixed(2));
@@ -184,14 +186,18 @@ export const generatePayroll = async (req, res) => {
                 }
                 // === END PENALTY DATE LOGIC ===
 
+                const baseBasic = (structure.components && structure.components.length > 0)
+                    ? structure.basic
+                    : (structure.grossEarnings > 0 ? structure.grossEarnings : (structure.ctc > 0 ? structure.ctc : structure.basic));
+
                 // Build component list with resolved amounts
                 const components = [
-                    { name: "Basic", type: "earning", amount: structure.basic },
-                    ...structure.components.map(c => ({
+                    { name: "Basic", type: "earning", amount: baseBasic },
+                    ...(structure.components || []).map(c => ({
                         name: c.name,
                         type: c.type,
                         amount: c.calcType === "percentage"
-                            ? parseFloat(((c.value / 100) * structure.basic).toFixed(2))
+                            ? parseFloat(((c.value / 100) * baseBasic).toFixed(2))
                             : c.value,
                     })),
                 ];

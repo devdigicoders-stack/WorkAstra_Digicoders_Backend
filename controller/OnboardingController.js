@@ -192,12 +192,17 @@ export const approveOnboarding = async (req, res) => {
         user.onboardingStatus = "approved";
 
         // Prepare Salary Structure in memory (Not saved yet)
+        const salaryAmount = Number(basicSalary);
         const salary = new SalaryStructure({
             userId: user._id,
             companyId: form.companyId ? form.companyId._id : null,
-            ctc: basicSalary, // Setting the overall CTC
-            basic: Math.round(basicSalary * 0.4), // 40% of CTC for Basic
+            ctc: salaryAmount, // Setting the overall CTC
+            basic: salaryAmount, // Monthly basic matches approved salary
+            grossEarnings: salaryAmount,
+            totalDeductions: 0,
+            netSalary: salaryAmount,
             effectiveFrom: new Date().toISOString().slice(0, 7), // "YYYY-MM" format usually
+            isActive: true,
             components: [] // Using components array as per schema
         });
 
