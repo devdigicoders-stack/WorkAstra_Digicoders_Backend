@@ -516,7 +516,22 @@ export const downloadOfferLetterPdf = async (req, res) => {
             </html>
         `;
 
-        const pdfBuffer = await generateOfferPdfBuffer(htmlContent);
+        const companyName = company?.name || 'DigiCoders Technologies Private Limited';
+        const userName = `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Employee';
+        const address = user.address || "Corporate Head Office - Lucknow";
+        const designation = user.designation?.name || user.role?.name || 'Developer';
+        const ctcFormatted = ctc ? Number(ctc).toLocaleString("en-IN") : "0";
+
+        const pdfBuffer = await generateOfferPdfBuffer(htmlContent, {
+            userName,
+            address,
+            designation,
+            companyName,
+            ctc: ctcFormatted,
+            joinDate,
+            today,
+            logoUrl
+        });
 
         res.set({
             'Content-Type': 'application/pdf',
@@ -525,7 +540,7 @@ export const downloadOfferLetterPdf = async (req, res) => {
         res.send(pdfBuffer);
     } catch (error) {
         console.error("Download Offer Letter Error:", error);
-        res.status(500).json({ message: "Failed to generate offer letter PDF", success: false });
+        res.status(500).json({ message: error.message || "Failed to generate offer letter PDF", success: false });
     }
 };
 
@@ -543,7 +558,7 @@ export const downloadEmployeeOfferLetterPdf = async (req, res) => {
     } catch (error) {
         console.error("Download Employee Offer Letter Error:", error);
         if (!res.headersSent) {
-            res.status(500).json({ message: "Failed to generate employee offer letter PDF", success: false });
+            res.status(500).json({ message: error.message || "Failed to generate employee offer letter PDF", success: false });
         }
     }
 };

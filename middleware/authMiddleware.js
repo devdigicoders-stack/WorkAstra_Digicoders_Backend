@@ -42,7 +42,7 @@ export const hasPermission = (...perms) => {
     return async (req, res, next) => {
         try {
             const roleName = req.user.role;
-            if (roleName === "super_admin") return next();
+            if (roleName === "super_admin" || roleName === "admin") return next();
 
             // Dynamically import to avoid circular deps
             const { default: User } = await import("../models/UserSchema.js");
@@ -53,7 +53,7 @@ export const hasPermission = (...perms) => {
             if (!user || !user.isActive)
                 return res.status(403).json({ message: "Account inactive or not found", success: false });
 
-            if (user.role?.name === "super_admin") return next();
+            if (user.role?.name === "super_admin" || user.role?.name === "admin") return next();
 
             const userPerms = user.role?.permissions || [];
             if (perms.some(p => userPerms.includes(p))) return next();

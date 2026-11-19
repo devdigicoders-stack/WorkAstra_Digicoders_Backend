@@ -29,6 +29,6 @@ router.post("/approve/:id", protect, hasPermission("MANAGE_USER", "APPROVE_ONBOA
 router.post("/reject/:id", protect, hasPermission("MANAGE_USER", "APPROVE_ONBOARDING"), rejectOnboarding);
 router.get("/my-offer-letter", protect, getMyOfferLetter);
 router.get("/my-offer-letter/download", protect, downloadOfferLetterPdf);
-router.get("/user-offer-letter/:userId/download", protect, hasPermission("MANAGE_USER"), downloadEmployeeOfferLetterPdf);
+router.get("/user-offer-letter/:userId/download", protect, hasPermission("MANAGE_USER", "APPROVE_ONBOARDING", "VIEW_USER", "VIEW_ALL_USERS", "UPDATE_USER"), downloadEmployeeOfferLetterPdf);
 
 export default router;
