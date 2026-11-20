@@ -17,9 +17,8 @@ export const getPerformanceReport = async (req, res) => {
         
         const isAdmin = reqUser.role === "super_admin" || reqUser.role === "admin";
         
-        // If not super_admin, filter by companyId
-        if (reqUser.role !== "super_admin") {
-            matchQuery.companyId = companyId;
+        // If not super_admin, filter attendance by companyId
+        if (reqUser.role !== "super_admin" && companyId) {
             attendanceMatch.companyId = companyId;
         }
 
@@ -39,28 +38,40 @@ export const getPerformanceReport = async (req, res) => {
             $lte: end.toISOString().split("T")[0] 
         };
 
-        // Time filtering for tasks
-        const taskMatchQuery = { ...matchQuery, createdAt: { $gte: start, $lte: end } };
-
         const viewAll = isAdmin || (reqUser.permissions && reqUser.permissions.includes("VIEW_ALL_PERFORMANCE"));
         
         let usersToFetch = [];
         if (reqUser.role === "super_admin") {
-            // Super Admin sees everyone
-            const users = await User.find({ isDeleted: false, isActive: true }).select("_id firstName lastName profilePic");
-            usersToFetch = users;
+            // Super Admin sees everyone across all companies
+            usersToFetch = await User.find({ isDeleted: false, isActive: true })
+                .populate("role", "name")
+                .select("_id firstName lastName profilePic role");
+        } else if (reqUser.role === "admin") {
+            // Company Admin sees all active employees of their company
+            usersToFetch = await User.find({ companyId: companyId, isDeleted: false, isActive: true })
+                .populate("role", "name")
+                .select("_id firstName lastName profilePic role");
         } else if (viewAll) {
-            // Admin/Manager with permission: hierarchy filter — only their subordinates
+            // Manager/Lead with VIEW_ALL_PERFORMANCE: hierarchy filter — their subordinates
             const allowedIds = await getSubordinateIds(reqUser.userId);
-            const users = await User.find({ _id: { $in: allowedIds }, isDeleted: false, isActive: true }).select("_id firstName lastName profilePic");
-            usersToFetch = users;
+            usersToFetch = await User.find({ _id: { $in: allowedIds }, isDeleted: false, isActive: true })
+                .populate("role", "name")
+                .select("_id firstName lastName profilePic role");
         } else {
             // Regular employee: only self
-            const user = await User.findById(reqUser.userId).select("_id firstName lastName profilePic");
+            const user = await User.findById(reqUser.userId)
+                .populate("role", "name")
+                .select("_id firstName lastName profilePic role");
             if (user) usersToFetch = [user];
         }
 
+        // Exclude clients from employee performance report
+        usersToFetch = usersToFetch.filter(u => u.role?.name?.toLowerCase() !== "client");
+
         const userIds = usersToFetch.map(u => u._id);
+
+        // Time filtering for tasks (matched by assignedTo in userIds)
+        const taskMatchQuery = { isDeleted: false, createdAt: { $gte: start, $lte: end } };
 
         // Fetch Tasks Aggregation (Assigned vs Completed vs Late)
         const taskAgg = await Task.aggregate([
@@ -173,7 +184,6 @@ export const getPerformanceReport = async (req, res) => {
         });
 
         const sortedPerformance = Object.values(performanceMap)
-            .filter(dev => dev.tasksAssigned > 0 || !viewAll) // Show if they have tasks, or if they are just viewing their own empty report
             .sort((a, b) => b.performanceScore - a.performanceScore);
 
         // Calculate team summary
