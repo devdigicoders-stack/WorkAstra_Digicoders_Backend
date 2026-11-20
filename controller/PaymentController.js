@@ -1,8 +1,10 @@
 import Payment from "../models/PaymentSchema.js";
 import SystemSettings from "../models/SystemSettingsSchema.js";
 import User from "../models/UserSchema.js";
+import Project from "../models/ProjectSchema.js";
 import { uploadToCloudinary } from "../middleware/multer.js";
 import { createNotification } from "../utills/notificationHelper.js";
+import { getSubordinateIds } from "../utills/hierarchyHelper.js";
 
 // Update global UPI details
 export const updateUpiDetails = async (req, res) => {
@@ -45,7 +47,7 @@ export const getUpiDetails = async (req, res) => {
 // User submits a payment
 export const submitPayment = async (req, res) => {
     try {
-        const { amount, transactionId, remark } = req.body;
+        const { amount, transactionId, remark, projectId } = req.body;
         const userId = req.user.userId;
 
         if (!req.file) {
@@ -60,9 +62,15 @@ export const submitPayment = async (req, res) => {
 
         const screenshot = await uploadToCloudinary(req.file, "payments");
 
+        let validProjectId = null;
+        if (projectId && projectId !== "null" && projectId !== "undefined" && projectId !== "") {
+            validProjectId = projectId;
+        }
+
         const payment = new Payment({
             userId,
             companyId,
+            projectId: validProjectId,
             amount: Number(amount),
             transactionId,
             remark,
@@ -84,10 +92,16 @@ export const submitPayment = async (req, res) => {
 
             if (notifyAdminIds.length > 0) {
                 const userObj = await User.findById(userId).select("firstName lastName");
+                let projectText = "";
+                if (validProjectId) {
+                    const proj = await Project.findById(validProjectId).select("name");
+                    if (proj) projectText = ` for project "${proj.name}"`;
+                }
+
                 await createNotification({
                     userId: notifyAdminIds,
                     title: "New Payment Uploaded",
-                    message: `${userObj?.firstName || "A client"} uploaded a new payment of ₹${amount}.`,
+                    message: `${userObj?.firstName || "A client"} uploaded a new payment of ₹${amount}${projectText}.`,
                     type: "system",
                     createdBy: userId
                 });
@@ -107,7 +121,9 @@ export const submitPayment = async (req, res) => {
 export const getMyPayments = async (req, res) => {
     try {
         const userId = req.user.userId;
-        const payments = await Payment.find({ userId }).sort({ createdAt: -1 });
+        const payments = await Payment.find({ userId })
+            .populate("projectId", "name price receivedAmount status")
+            .sort({ createdAt: -1 });
         res.status(200).json({ success: true, payments });
     } catch (error) {
         console.error("Error fetching payments:", error);
@@ -134,6 +150,7 @@ export const getAllPayments = async (req, res) => {
         const payments = await Payment.find(filter)
             .populate("userId", "firstName lastName email profilePic")
             .populate("reviewedBy", "firstName lastName")
+            .populate("projectId", "name price receivedAmount status")
             .sort({ createdAt: -1 });
 
         res.status(200).json({ success: true, payments });
@@ -178,6 +195,16 @@ export const updatePaymentStatus = async (req, res) => {
 
         await payment.save();
 
+        // If payment is linked to a project, recalculate project receivedAmount
+        if (payment.projectId) {
+            const approvedPayments = await Payment.find({
+                projectId: payment.projectId,
+                status: "approved"
+            });
+            const totalReceived = approvedPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+            await Project.findByIdAndUpdate(payment.projectId, { receivedAmount: totalReceived });
+        }
+
         // Notify user about payment status
         try {
             await createNotification({
@@ -195,5 +222,117 @@ export const updatePaymentStatus = async (req, res) => {
     } catch (error) {
         console.error("Error updating payment status:", error);
         res.status(500).json({ message: "Failed to update payment status", success: false });
+    }
+};
+
+// Super Admin / Admin gets project finance summary
+export const getProjectFinances = async (req, res) => {
+    try {
+        const isSuperAdmin = req.user.role === "super_admin";
+        const hasAdminPerm = (req.user.permissions || []).some(p =>
+            ["MANAGE_PAYMENTS", "VIEW_ALL_PROJECTS", "CREATE_PROJECT"].includes(p)
+        );
+
+        let filter = { isDeleted: false };
+        if (!isSuperAdmin) {
+            const allowedIds = await getSubordinateIds(req.user.userId);
+            if (hasAdminPerm) {
+                filter.$or = [
+                    { members: { $in: allowedIds } },
+                    { createdBy: { $in: allowedIds } }
+                ];
+            } else {
+                filter.$or = [
+                    { members: req.user.userId },
+                    { createdBy: req.user.userId },
+                    { clientIds: req.user.userId }
+                ];
+            }
+        }
+
+        const projects = await Project.find(filter)
+            .populate("clientIds", "firstName lastName email profilePic")
+            .populate("createdBy", "firstName lastName")
+            .sort({ createdAt: -1 })
+            .lean();
+
+        const projectIds = projects.map(p => p._id);
+        const payments = await Payment.find({
+            projectId: { $in: projectIds }
+        })
+            .populate("userId", "firstName lastName email")
+            .sort({ createdAt: -1 })
+            .lean();
+
+        // Group payments by project
+        const projectPaymentsMap = {};
+        payments.forEach(pay => {
+            const pid = pay.projectId?.toString();
+            if (!projectPaymentsMap[pid]) {
+                projectPaymentsMap[pid] = { approved: 0, pending: 0, count: 0, items: [] };
+            }
+            if (pay.status === "approved") {
+                projectPaymentsMap[pid].approved += Number(pay.amount) || 0;
+            } else if (pay.status === "pending") {
+                projectPaymentsMap[pid].pending += Number(pay.amount) || 0;
+            }
+            projectPaymentsMap[pid].count += 1;
+            projectPaymentsMap[pid].items.push(pay);
+        });
+
+        let totalValuation = 0;
+        let totalReceived = 0;
+        let totalDue = 0;
+        let totalPendingApproval = 0;
+
+        const enrichedProjects = projects.map(proj => {
+            const pid = proj._id.toString();
+            const payInfo = projectPaymentsMap[pid] || { approved: 0, pending: 0, count: 0, items: [] };
+            const dealPrice = Number(proj.price) || 0;
+            const received = payInfo.approved;
+            const due = Math.max(0, dealPrice - received);
+
+            totalValuation += dealPrice;
+            totalReceived += received;
+            totalDue += due;
+            totalPendingApproval += payInfo.pending;
+
+            let paymentStatus = "unpaid";
+            if (dealPrice > 0) {
+                if (received >= dealPrice) paymentStatus = "paid";
+                else if (received > 0) paymentStatus = "partial";
+            } else if (received > 0) {
+                paymentStatus = "paid";
+            }
+
+            return {
+                ...proj,
+                price: dealPrice,
+                receivedAmount: received,
+                dueAmount: due,
+                pendingApprovalAmount: payInfo.pending,
+                paymentStatus,
+                paymentsCount: payInfo.count,
+                recentPayments: payInfo.items
+            };
+        });
+
+        res.status(200).json({
+            success: true,
+            summary: {
+                totalValuation,
+                totalReceived,
+                totalDue,
+                totalPendingApproval,
+                totalProjects: projects.length,
+                fullyPaidProjects: enrichedProjects.filter(p => p.paymentStatus === "paid").length,
+                partialProjects: enrichedProjects.filter(p => p.paymentStatus === "partial").length,
+                unpaidProjects: enrichedProjects.filter(p => p.paymentStatus === "unpaid").length,
+            },
+            projects: enrichedProjects
+        });
+    } catch (error) {
+        console.error("Error fetching project finances:", error);
+        res.status(500).json({ message: "Failed to fetch project finances", success: false });
     }
 };

@@ -10,6 +10,11 @@ const PaymentSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: "Company"
     },
+    projectId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Project",
+        default: null
+    },
     amount: {
         type: Number,
         required: true

@@ -7,7 +7,8 @@ import {
     submitPayment,
     getMyPayments,
     getAllPayments,
-    updatePaymentStatus
+    updatePaymentStatus,
+    getProjectFinances
 } from "../controller/PaymentController.js";
 
 const router = express.Router();
@@ -20,6 +21,7 @@ router.get("/my", protect, hasPermission("SUBMIT_PAYMENT"), getMyPayments);
 // Admin / Manager routes
 router.post("/upi-update", protect, hasPermission("MANAGE_PAYMENTS"), updateUpiDetails);
 router.get("/all", protect, hasPermission("MANAGE_PAYMENTS"), getAllPayments);
+router.get("/project-finances", protect, hasPermission("MANAGE_PAYMENTS", "VIEW_ALL_PROJECTS", "CREATE_PROJECT"), getProjectFinances);
 router.put("/:id/status", protect, hasPermission("MANAGE_PAYMENTS"), updatePaymentStatus);
 
 export default router;
