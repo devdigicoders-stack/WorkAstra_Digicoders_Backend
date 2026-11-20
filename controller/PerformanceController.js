@@ -176,9 +176,45 @@ export const getPerformanceReport = async (req, res) => {
             .filter(dev => dev.tasksAssigned > 0 || !viewAll) // Show if they have tasks, or if they are just viewing their own empty report
             .sort((a, b) => b.performanceScore - a.performanceScore);
 
+        // Calculate team summary
+        const totalAssigned = sortedPerformance.reduce((s, d) => s + (d.tasksAssigned || 0), 0);
+        const totalCompleted = sortedPerformance.reduce((s, d) => s + (d.tasksCompleted || 0), 0);
+        const avgScore = sortedPerformance.length > 0
+            ? Math.round(sortedPerformance.reduce((s, d) => s + (d.performanceScore || 0), 0) / sortedPerformance.length)
+            : 0;
+        const avgCompletionRate = totalAssigned > 0
+            ? Math.round((totalCompleted / totalAssigned) * 100)
+            : (sortedPerformance.length > 0 ? Math.round(sortedPerformance.reduce((s, d) => s + (d.taskCompletionRate || 0), 0) / sortedPerformance.length) : 0);
+
+        // Calculate average completion time in hours for completed tasks
+        const completedTasks = await Task.find({
+            status: "done",
+            createdAt: { $gte: start, $lte: end }
+        }).select("createdAt updatedAt");
+
+        let avgCompletionHours = 0;
+        if (completedTasks.length > 0) {
+            const totalHours = completedTasks.reduce((sum, t) => {
+                const diffMs = new Date(t.updatedAt) - new Date(t.createdAt);
+                const hrs = Math.max(0, diffMs / (1000 * 60 * 60));
+                return sum + hrs;
+            }, 0);
+            avgCompletionHours = Math.round((totalHours / completedTasks.length) * 10) / 10;
+        }
+
         res.json({
             success: true,
-            data: sortedPerformance
+            data: sortedPerformance,
+            summary: {
+                totalAssigned,
+                totalCompleted,
+                avgCompletionRate,
+                avgScore,
+                avgCompletionHours,
+            },
+            avgCompletionTime: avgCompletionHours,
+            avgCompletionRate,
+            avgScore
         });
 
     } catch (error) {
