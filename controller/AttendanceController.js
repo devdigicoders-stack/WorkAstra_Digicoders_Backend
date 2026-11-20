@@ -417,10 +417,15 @@ export const adminCreatePunch = async (req, res) => {
 export const getTeamAttendance = async (req, res) => {
     try {
         const { date, month, startDate, endDate } = req.query;
-        const directReports = await User.find({ reportingTo: req.user.userId, isDeleted: false }).select("_id");
-        if (!directReports.length) return res.status(200).json({ records: [], success: true });
+        const directReports = await User.find({ reportingTo: req.user.userId, isDeleted: false })
+            .populate("role", "name")
+            .select("_id role");
+        
+        // Exclude client role from direct reports
+        const validReports = directReports.filter(u => u.role?.name?.toLowerCase() !== "client");
+        if (!validReports.length) return res.status(200).json({ records: [], success: true });
 
-        const filter = { userId: { $in: directReports.map(u => u._id) } };
+        const filter = { userId: { $in: validReports.map(u => u._id) } };
         
         if (startDate && endDate) {
             filter.date = { $gte: startDate, $lte: endDate };
@@ -431,11 +436,17 @@ export const getTeamAttendance = async (req, res) => {
         }
 
         const records = await Attendance.find(filter)
-            .populate("userId", "firstName lastName email employeeCode profilePic")
+            .populate({
+                path: "userId",
+                select: "firstName lastName email employeeCode profilePic role",
+                populate: { path: "role", select: "name" }
+            })
             .populate("workShiftId", "name startTime endTime")
             .sort({ date: -1, checkIn: -1 });
 
-        res.status(200).json({ records, success: true });
+        const filteredRecords = records.filter(r => r.userId && r.userId.role?.name?.toLowerCase() !== "client");
+
+        res.status(200).json({ records: filteredRecords, success: true });
     } catch (error) {
         res.status(500).json({ message: error.message, success: false });
     }
@@ -447,15 +458,26 @@ export const getCompanyAttendance = async (req, res) => {
         const reqUser = await User.findById(req.user.userId).select("companyId role").populate("role", "name");
         if (!reqUser) return res.status(404).json({ message: "User not found", success: false });
 
+        // Find client role to exclude clients from attendance
+        const clientRole = await Role.findOne({ name: { $regex: /^client$/i } });
+        let clientUserIds = [];
+        if (clientRole) {
+            const clients = await User.find({ role: clientRole._id }).select("_id");
+            clientUserIds = clients.map(c => c._id.toString());
+        }
+
         const filter = {};
 
         if (reqUser.role?.name === "super_admin") {
-            // Super Admin sees all attendance records
+            // Super Admin sees all attendance records (excluding clients)
+            if (clientUserIds.length > 0) {
+                filter.userId = { $nin: clientUserIds };
+            }
         } else {
             // Hierarchy filter: only see attendance of self + subordinates
-            // Admin B1 sees H, E, Z but NOT Admin B2's data
             const allowedIds = await getSubordinateIds(req.user.userId);
-            filter.userId = { $in: allowedIds };
+            const nonClientAllowedIds = allowedIds.filter(id => !clientUserIds.includes(id.toString()));
+            filter.userId = { $in: nonClientAllowedIds };
         }
 
         if (startDate && endDate) {
@@ -470,13 +492,19 @@ export const getCompanyAttendance = async (req, res) => {
         if (userId) filter.userId = userId;
 
         const records = await Attendance.find(filter)
-            .populate("userId", "firstName lastName email employeeCode profilePic")
+            .populate({
+                path: "userId",
+                select: "firstName lastName email employeeCode profilePic role",
+                populate: { path: "role", select: "name" }
+            })
             .populate("companyId", "name")
             .populate("workShiftId", "name startTime endTime")
             .populate("createdBy", "firstName lastName")
             .sort({ date: -1, checkIn: -1 });
 
-        res.status(200).json({ records, success: true });
+        const filteredRecords = records.filter(r => r.userId && r.userId.role?.name?.toLowerCase() !== "client");
+
+        res.status(200).json({ records: filteredRecords, success: true });
     } catch (error) {
         console.error("COMPANY ATTENDANCE ERROR:", error);
         res.status(500).json({ message: "Error fetching company attendance", success: false });
