@@ -336,21 +336,37 @@ export const manualPunch = async (req, res) => {
         const attendance = await Attendance.findById(req.params.id);
         if (!attendance) return res.status(404).json({ message: "Attendance record not found", success: false });
 
-        if (ci) attendance.checkIn = parseISTDate(ci);
-        if (co) attendance.checkOut = parseISTDate(co);
-        if (status) attendance.status = status;
-        if (note) attendance.note = note;
-        if (attendance.checkIn && attendance.checkOut) {
-            const diff = new Date(attendance.checkOut) - new Date(attendance.checkIn);
-            attendance.workHours = parseFloat((diff / 3600000).toFixed(2));
+        if (status === "absent") {
+            attendance.status = "absent";
+            attendance.checkIn = null;
+            attendance.checkOut = null;
+            attendance.workHours = 0;
+            attendance.punches = [];
+        } else {
+            if (ci) attendance.checkIn = parseISTDate(ci);
+            if (co) attendance.checkOut = parseISTDate(co);
+            if (status) attendance.status = status;
+            if (note) attendance.note = note;
+
+            if (attendance.checkIn && attendance.checkOut) {
+                const diff = new Date(attendance.checkOut) - new Date(attendance.checkIn);
+                attendance.workHours = parseFloat((diff / 3600000).toFixed(2));
+            } else if (!attendance.checkIn) {
+                attendance.workHours = 0;
+            }
+
+            if (attendance.punches && attendance.punches.length > 0) {
+                if (attendance.checkIn) attendance.punches[0].checkIn = attendance.checkIn;
+                if (attendance.checkOut) attendance.punches[0].checkOut = attendance.checkOut;
+                if (attendance.workHours) attendance.punches[0].workHours = attendance.workHours;
+            } else if (attendance.checkIn) {
+                attendance.punches = [{ checkIn: attendance.checkIn, checkOut: attendance.checkOut || undefined, workHours: attendance.workHours || 0 }];
+            }
         }
 
-        if (attendance.punches && attendance.punches.length > 0) {
-            if (attendance.checkIn) attendance.punches[0].checkIn = attendance.checkIn;
-            if (attendance.checkOut) attendance.punches[0].checkOut = attendance.checkOut;
-            if (attendance.workHours) attendance.punches[0].workHours = attendance.workHours;
-        } else if (attendance.checkIn) {
-            attendance.punches = [{ checkIn: attendance.checkIn, checkOut: attendance.checkOut || undefined, workHours: attendance.workHours || 0 }];
+        if (!attendance.workShiftId) {
+            const u = await User.findById(attendance.userId).select("workShift");
+            if (u?.workShift) attendance.workShiftId = u.workShift;
         }
 
         attendance.isRegularized = true;
