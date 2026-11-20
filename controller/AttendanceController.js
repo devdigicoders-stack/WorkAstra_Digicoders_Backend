@@ -107,7 +107,7 @@ export const checkIn = async (req, res) => {
         const userId = req.user.userId;
         const { latitude, longitude, address, faceDescriptor } = req.body;
 
-        const user = await User.findById(userId).select("companyId workShift attendanceSettings branch");
+        const user = await User.findById(userId).select("companyId workShift attendanceSettings branch firstName lastName");
         if (!user) return res.status(404).json({ message: "User not found", success: false });
 
         // ── Geofence check (Branch level) ──
@@ -143,25 +143,31 @@ export const checkIn = async (req, res) => {
         const shift = user.workShift ? await WorkShift.findById(user.workShift) : null;
         const now = new Date(); // UTC — stored in DB as UTC, displayed correctly via toLocaleTimeString
 
+        const employeeName = `${user.firstName || ""} ${user.lastName || ""}`.trim() || "Employee";
+
         if (existing) {
             // Allow re-check-in only if last punch has a checkout
-            const lastPunch = existing.punches[existing.punches.length - 1];
+            const lastPunch = existing.punches && existing.punches.length > 0 ? existing.punches[existing.punches.length - 1] : null;
             const hasOpenPunch = lastPunch && !lastPunch.checkOut;
             if (hasOpenPunch) return res.status(400).json({ message: "Already checked in. Please check out first.", success: false });
+
+            // Ensure punches array exists
+            if (!Array.isArray(existing.punches)) existing.punches = [];
 
             // Add new punch
             existing.punches.push({ checkIn: now, checkInLocation: { latitude, longitude, address } });
             existing.checkIn = existing.punches[0].checkIn; // keep first check-in as primary
             existing.checkOut = null; // open again
+            if (!existing.createdBy) existing.createdBy = userId;
             await existing.save();
 
             const populated = await Attendance.findById(existing._id)
                 .populate("workShiftId", "name startTime endTime")
                 .populate("createdBy", "firstName lastName");
 
-        const checkInTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
+            const checkInTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
             await createNotification({ userId, title: "Check-In Recorded", message: `You re-checked in at ${checkInTime}.`, type: "attendance", link: "/attendance", createdBy: userId });
-            await notifyAdmins(user.companyId, "User Checked In", `${populated.createdBy.firstName} ${populated.createdBy.lastName} re-checked in at ${checkInTime}.`);
+            await notifyAdmins(user.companyId, "User Checked In", `${employeeName} re-checked in at ${checkInTime}.`);
             return res.status(200).json({ message: "Re-checked in successfully", attendance: populated, success: true });
         }
 
@@ -184,12 +190,12 @@ export const checkIn = async (req, res) => {
 
         const checkInTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
         await createNotification({ userId, title: "Check-In Recorded", message: `You checked in at ${checkInTime}. Status: ${status}.`, type: "attendance", link: "/attendance", createdBy: userId });
-        await notifyAdmins(user.companyId, "User Checked In", `${populated.createdBy.firstName} ${populated.createdBy.lastName} checked in at ${checkInTime}. Status: ${status}.`);
+        await notifyAdmins(user.companyId, "User Checked In", `${employeeName} checked in at ${checkInTime}. Status: ${status}.`);
 
         res.status(201).json({ message: "Checked in successfully", attendance: populated, success: true });
     } catch (error) {
         console.error("CHECK-IN ERROR:", error);
-        res.status(500).json({ message: "Error checking in", success: false });
+        res.status(500).json({ message: error.message || "Error checking in", success: false });
     }
 };
 
@@ -199,9 +205,15 @@ export const checkOut = async (req, res) => {
         const userId = req.user.userId;
         const { latitude, longitude, address } = req.body;
 
+        const user = await User.findById(userId).select("companyId workShift firstName lastName");
+        const employeeName = `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "Employee";
+
         const date = todayDate();
         const attendance = await Attendance.findOne({ userId, date });
         if (!attendance) return res.status(404).json({ message: "No check-in found for today", success: false });
+
+        // Ensure punches array exists
+        if (!Array.isArray(attendance.punches)) attendance.punches = [];
 
         // Find the open punch (last punch without checkout)
         const lastPunch = attendance.punches[attendance.punches.length - 1];
@@ -239,12 +251,12 @@ export const checkOut = async (req, res) => {
 
         const checkOutTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
         await createNotification({ userId, title: "Check-Out Recorded", message: `You checked out at ${checkOutTime}. Total hours: ${totalWorkHours}h. Status: ${status}.`, type: "attendance", link: "/attendance", createdBy: userId });
-        await notifyAdmins(populated.companyId, "User Checked Out", `${populated.createdBy.firstName} ${populated.createdBy.lastName} checked out at ${checkOutTime}. Total hours: ${totalWorkHours}h.`);
+        await notifyAdmins(user?.companyId || populated?.companyId, "User Checked Out", `${employeeName} checked out at ${checkOutTime}. Total hours: ${totalWorkHours}h.`);
 
         res.status(200).json({ message: "Checked out successfully", attendance: populated, success: true });
     } catch (error) {
         console.error("CHECK-OUT ERROR:", error);
-        res.status(500).json({ message: "Error checking out", success: false });
+        res.status(500).json({ message: error.message || "Error checking out", success: false });
     }
 };
 
