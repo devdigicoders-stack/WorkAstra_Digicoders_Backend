@@ -528,8 +528,31 @@ export const getUpcomingEvents = async (req, res) => {
 
         const users = await User.find(query).select("firstName lastName profilePic dateOfBirth joiningDate");
 
-        const today = new Date();
-        const todayNoTime = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+        const istFormatter = new Intl.DateTimeFormat("en-US", {
+            timeZone: "Asia/Kolkata",
+            year: "numeric",
+            month: "numeric",
+            day: "numeric"
+        });
+        const getISTParts = (dInput) => {
+            if (!dInput) return null;
+            let d;
+            if (typeof dInput === "string" && /^\d{4}-\d{2}-\d{2}$/.test(dInput)) {
+                d = new Date(dInput + "T00:00:00+05:30");
+            } else {
+                d = new Date(dInput);
+            }
+            if (isNaN(d.getTime())) return null;
+            const p = istFormatter.formatToParts(d);
+            return {
+                day: parseInt(p.find(x => x.type === "day").value, 10),
+                month: parseInt(p.find(x => x.type === "month").value, 10) - 1,
+                year: parseInt(p.find(x => x.type === "year").value, 10)
+            };
+        };
+
+        const todayParts = getISTParts(new Date());
+        const todayNoTime = new Date(todayParts.year, todayParts.month, todayParts.day);
         const thirtyDaysFromNow = new Date(todayNoTime);
         thirtyDaysFromNow.setDate(todayNoTime.getDate() + 30);
 
@@ -537,36 +560,38 @@ export const getUpcomingEvents = async (req, res) => {
         const upcomingAnniversaries = [];
 
         users.forEach(user => {
-            // Check Birthday
+            // Check Birthday in IST
             if (user.dateOfBirth) {
-                const dob = new Date(user.dateOfBirth);
-                const nextBirthday = new Date(today.getFullYear(), dob.getMonth(), dob.getDate());
-                
-                if (nextBirthday < todayNoTime) {
-                    nextBirthday.setFullYear(today.getFullYear() + 1);
-                }
+                const dobParts = getISTParts(user.dateOfBirth);
+                if (dobParts) {
+                    const nextBirthday = new Date(todayParts.year, dobParts.month, dobParts.day);
+                    
+                    if (nextBirthday < todayNoTime) {
+                        nextBirthday.setFullYear(todayParts.year + 1);
+                    }
 
-                if (nextBirthday >= todayNoTime && nextBirthday <= thirtyDaysFromNow) {
-                    upcomingBirthdays.push({
-                        user: { _id: user._id, firstName: user.firstName, lastName: user.lastName, profilePic: user.profilePic },
-                        date: nextBirthday,
-                        type: "Birthday"
-                    });
+                    if (nextBirthday >= todayNoTime && nextBirthday <= thirtyDaysFromNow) {
+                        upcomingBirthdays.push({
+                            user: { _id: user._id, firstName: user.firstName, lastName: user.lastName, profilePic: user.profilePic },
+                            date: nextBirthday,
+                            type: "Birthday"
+                        });
+                    }
                 }
             }
 
-            // Check Anniversary
+            // Check Anniversary in IST
             if (user.joiningDate) {
-                const doj = new Date(user.joiningDate);
-                if (doj.getFullYear() < today.getFullYear()) {
-                    const nextAnniversary = new Date(today.getFullYear(), doj.getMonth(), doj.getDate());
+                const dojParts = getISTParts(user.joiningDate);
+                if (dojParts && dojParts.year < todayParts.year) {
+                    const nextAnniversary = new Date(todayParts.year, dojParts.month, dojParts.day);
                     
                     if (nextAnniversary < todayNoTime) {
-                        nextAnniversary.setFullYear(today.getFullYear() + 1);
+                        nextAnniversary.setFullYear(todayParts.year + 1);
                     }
 
                     if (nextAnniversary >= todayNoTime && nextAnniversary <= thirtyDaysFromNow) {
-                        const years = nextAnniversary.getFullYear() - doj.getFullYear();
+                        const years = nextAnniversary.getFullYear() - dojParts.year;
                         upcomingAnniversaries.push({
                             user: { _id: user._id, firstName: user.firstName, lastName: user.lastName, profilePic: user.profilePic },
                             date: nextAnniversary,
