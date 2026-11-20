@@ -105,7 +105,35 @@ export const getProjects = async (req, res) => {
             .populate("members", "firstName lastName profilePic")
             .populate("clientIds", "firstName lastName profilePic email")
             .sort({ createdAt: -1 });
-        res.json({ success: true, data: projects });
+
+        // Aggregate task stats for these projects
+        const projectIds = projects.map(p => p._id);
+        const tasks = await Task.find({ project: { $in: projectIds }, isDeleted: false }).select("project status");
+
+        const taskMap = {};
+        for (const t of tasks) {
+            const pid = t.project?.toString();
+            if (!pid) continue;
+            if (!taskMap[pid]) taskMap[pid] = { total: 0, done: 0, pending: 0 };
+            taskMap[pid].total += 1;
+            if (t.status === "done") {
+                taskMap[pid].done += 1;
+            } else {
+                taskMap[pid].pending += 1;
+            }
+        }
+
+        const enrichedProjects = projects.map(p => {
+            const pObj = p.toObject();
+            const stats = taskMap[p._id.toString()] || { total: 0, done: 0, pending: 0 };
+            pObj.tasksCount = stats.total;
+            pObj.completedTasksCount = stats.done;
+            pObj.pendingTasksCount = stats.pending;
+            pObj.progress = stats.total > 0 ? Math.round((stats.done / stats.total) * 100) : 0;
+            return pObj;
+        });
+
+        res.json({ success: true, data: enrichedProjects });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }

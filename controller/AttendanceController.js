@@ -280,12 +280,35 @@ export const getMyAttendance = async (req, res) => {
     }
 };
 
-// GET /api/attendance/summary?month=2025-01
+// GET /api/attendance/summary?month=2025-01&scope=team
 export const getAttendanceSummary = async (req, res) => {
     try {
-        const userId = req.user.userId;
-        const month = req.query.month || new Date().toISOString().slice(0, 7);
-        const records = await Attendance.find({ userId, date: { $regex: `^${month}` } });
+        const { month: qMonth, userId: qUserId, scope } = req.query;
+        const month = qMonth || new Date().toISOString().slice(0, 7);
+
+        const reqUser = await User.findById(req.user.userId).select("companyId role").populate("role", "name");
+        const isSuperAdmin = reqUser?.role?.name === "super_admin" || req.user.role === "super_admin";
+        const isAdmin = isSuperAdmin || reqUser?.role?.name === "admin" || req.user.role === "admin";
+
+        let filter = { date: { $regex: `^${month}` } };
+
+        if (qUserId) {
+            filter.userId = qUserId;
+        } else if (scope === "my") {
+            filter.userId = req.user.userId;
+        } else if (isAdmin || scope === "team") {
+            if (isSuperAdmin) {
+                // Super Admin sees all company team attendance
+            } else {
+                // Admin sees subordinates attendance
+                const allowedIds = await getSubordinateIds(req.user.userId);
+                filter.userId = { $in: allowedIds };
+            }
+        } else {
+            filter.userId = req.user.userId;
+        }
+
+        const records = await Attendance.find(filter);
 
         const summary = {
             present:     records.filter(r => r.status === "present").length,
@@ -296,10 +319,12 @@ export const getAttendanceSummary = async (req, res) => {
             absent:      records.filter(r => r.status === "absent").length,
             totalDays:   records.length,
             totalHours:  parseFloat(records.reduce((sum, r) => sum + (r.workHours || 0), 0).toFixed(2)),
+            isTeam:      isAdmin && scope !== "my",
         };
 
         res.status(200).json({ summary, success: true });
     } catch (error) {
+        console.error("Error fetching summary:", error);
         res.status(500).json({ message: "Error fetching summary", success: false });
     }
 };

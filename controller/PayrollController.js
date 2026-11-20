@@ -283,13 +283,35 @@ export const getPayrollRuns = async (req, res) => {
     }
 };
 
-// GET /api/payroll/my?month=2025-06  — employee sees own payslips
+// GET /api/payroll/my?month=2025-06  — employee sees own payslips (or admin recent runs)
 export const getMyPayslips = async (req, res) => {
     try {
         const { month } = req.query;
-        // Employees should only see approved or paid payslips (not drafts)
-        const filter = { userId: req.user.userId, status: { $in: ["approved", "paid"] } };
+        const reqUser = await User.findById(req.user.userId).select("companyId role").populate("role", "name");
+        const isSuperAdmin = reqUser?.role?.name === "super_admin" || req.user.role === "super_admin";
+        const isAdmin = isSuperAdmin || reqUser?.role?.name === "admin" || req.user.role === "admin";
+
+        let filter = {};
         if (month) filter.month = month;
+
+        if (isAdmin) {
+            // Check if admin has personal payslips
+            const myCount = await PayrollRun.countDocuments({ userId: req.user.userId });
+            if (myCount > 0) {
+                filter.userId = req.user.userId;
+                filter.status = { $in: ["approved", "paid"] };
+            } else {
+                // Admin sees recent company/team payroll runs
+                if (!isSuperAdmin) {
+                    const allowedIds = await getSubordinateIds(req.user.userId);
+                    filter.userId = { $in: allowedIds };
+                }
+            }
+        } else {
+            // Employees should only see approved or paid payslips (not drafts)
+            filter.userId = req.user.userId;
+            filter.status = { $in: ["approved", "paid"] };
+        }
 
         const runs = await PayrollRun.find(filter)
             .populate({
@@ -302,9 +324,9 @@ export const getMyPayslips = async (req, res) => {
             })
             .populate("salaryStructureId", "ctc basic")
             .populate("approvedBy", "firstName lastName")
-            .sort({ month: -1 });
+            .sort({ month: -1, createdAt: -1 });
 
-        res.status(200).json({ runs, success: true });
+        res.status(200).json({ runs, payslips: runs, success: true });
     } catch (err) {
         res.status(500).json({ message: err.message, success: false });
     }

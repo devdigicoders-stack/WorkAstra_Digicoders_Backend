@@ -32,7 +32,22 @@ export const getMyBalance = async (req, res) => {
         const year = parseInt(req.query.year) || new Date().getFullYear();
         const balances = await LeaveBalance.find({ userId: req.user.userId, year })
             .populate("leaveTypeId", "name code isPaid defaultDays");
-        res.status(200).json({ balances, success: true });
+
+        const enriched = balances.map(b => {
+            const obj = b.toObject ? b.toObject() : b;
+            const total = (obj.allocated || 0) + (obj.carried || 0);
+            const used = obj.used || 0;
+            const pending = obj.pending || 0;
+            const remaining = Math.max(0, total - used - pending);
+            return {
+                ...obj,
+                total,
+                remaining,
+                leaveType: obj.leaveTypeId
+            };
+        });
+
+        res.status(200).json({ balances: enriched, success: true });
     } catch (err) {
         res.status(500).json({ message: err.message, success: false });
     }
