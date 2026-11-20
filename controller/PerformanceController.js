@@ -1,6 +1,7 @@
 import Task from "../models/TaskSchema.js";
 import Attendance from "../models/AttendanceSchema.js";
 import User from "../models/UserSchema.js";
+import Project from "../models/ProjectSchema.js";
 import mongoose from "mongoose";
 import { getSubordinateIds } from "../utills/hierarchyHelper.js";
 
@@ -8,7 +9,7 @@ const cid = (req) => req.user.company ? new mongoose.Types.ObjectId(req.user.com
 
 export const getPerformanceReport = async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, month, allTime } = req.query;
         const companyId = cid(req);
         const reqUser = req.user;
 
@@ -24,19 +25,37 @@ export const getPerformanceReport = async (req, res) => {
 
         // Apply date filters if provided, otherwise default to this month
         let start, end;
-        if (startDate && endDate) {
-            start = new Date(startDate);
-            end = new Date(endDate);
+        let startStr, endStr;
+
+        if (allTime === "true") {
+            start = new Date(0);
+            end = new Date();
+            // No date restrictions on attendance
+        } else if (month) {
+            const [y, m] = month.split("-").map(Number);
+            const lastDay = new Date(y, m, 0).getDate();
+            startStr = `${month}-01`;
+            endStr = `${month}-${String(lastDay).padStart(2, "0")}`;
+            start = new Date(`${startStr}T00:00:00.000+05:30`);
+            end = new Date(`${endStr}T23:59:59.999+05:30`);
+            attendanceMatch.date = { $gte: startStr, $lte: endStr };
+        } else if (startDate && endDate) {
+            startStr = startDate.includes("T") ? startDate.split("T")[0] : startDate;
+            endStr = endDate.includes("T") ? endDate.split("T")[0] : endDate;
+            start = new Date(`${startStr}T00:00:00.000+05:30`);
+            end = new Date(`${endStr}T23:59:59.999+05:30`);
+            attendanceMatch.date = { $gte: startStr, $lte: endStr };
         } else {
             const now = new Date();
-            start = new Date(now.getFullYear(), now.getMonth(), 1);
-            end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+            const year = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, "0");
+            const lastDay = new Date(year, now.getMonth() + 1, 0).getDate();
+            startStr = `${year}-${m}-01`;
+            endStr = `${year}-${m}-${String(lastDay).padStart(2, "0")}`;
+            start = new Date(`${startStr}T00:00:00.000+05:30`);
+            end = new Date(`${endStr}T23:59:59.999+05:30`);
+            attendanceMatch.date = { $gte: startStr, $lte: endStr };
         }
-
-        attendanceMatch.date = { 
-            $gte: start.toISOString().split("T")[0], 
-            $lte: end.toISOString().split("T")[0] 
-        };
 
         const viewAll = isAdmin || (reqUser.permissions && reqUser.permissions.includes("VIEW_ALL_PERFORMANCE"));
         
@@ -71,7 +90,7 @@ export const getPerformanceReport = async (req, res) => {
         const userIds = usersToFetch.map(u => u._id);
 
         // Time filtering for tasks (matched by assignedTo in userIds)
-        const taskMatchQuery = { isDeleted: false, createdAt: { $gte: start, $lte: end } };
+        const taskMatchQuery = { isDeleted: false, ...(allTime !== "true" ? { createdAt: { $gte: start, $lte: end } } : {}) };
 
         // Fetch Tasks Aggregation (Assigned vs Completed vs Late)
         const taskAgg = await Task.aggregate([
@@ -116,6 +135,16 @@ export const getPerformanceReport = async (req, res) => {
             }
         ]);
 
+        // Fetch detailed task records for all employees in the period
+        const periodTasks = await Task.find({
+            ...taskMatchQuery,
+            assignedTo: { $in: userIds }
+        })
+        .populate("project", "name")
+        .select("title description status priority dueDate createdAt updatedAt assignedTo project")
+        .sort({ createdAt: -1 })
+        .lean();
+
         // Fetch Attendance Aggregation
         const attendanceAgg = await Attendance.aggregate([
             { $match: { ...attendanceMatch, userId: { $in: userIds } } },
@@ -145,8 +174,32 @@ export const getPerformanceReport = async (req, res) => {
                 daysLate: 0,
                 totalWorkingDays: 0,
                 attendanceRate: 0,
-                performanceScore: 0
+                performanceScore: 0,
+                tasks: []
             };
+        });
+
+        // Map detailed tasks to respective assignees
+        periodTasks.forEach(task => {
+            const assignees = Array.isArray(task.assignedTo) ? task.assignedTo : [task.assignedTo];
+            assignees.forEach(assigneeId => {
+                if (!assigneeId) return;
+                const key = assigneeId.toString();
+                if (performanceMap[key]) {
+                    performanceMap[key].tasks.push({
+                        _id: task._id,
+                        title: task.title,
+                        description: task.description || "",
+                        projectName: task.project?.name || "General / No Project",
+                        projectId: task.project?._id || null,
+                        status: task.status,
+                        priority: task.priority || "medium",
+                        dueDate: task.dueDate,
+                        createdAt: task.createdAt,
+                        updatedAt: task.updatedAt
+                    });
+                }
+            });
         });
 
         taskAgg.forEach(item => {
@@ -199,7 +252,7 @@ export const getPerformanceReport = async (req, res) => {
         // Calculate average completion time in hours for completed tasks
         const completedTasks = await Task.find({
             status: "done",
-            createdAt: { $gte: start, $lte: end }
+            ...(allTime !== "true" ? { createdAt: { $gte: start, $lte: end } } : {})
         }).select("createdAt updatedAt");
 
         let avgCompletionHours = 0;
