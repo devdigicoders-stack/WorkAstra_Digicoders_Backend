@@ -241,7 +241,11 @@ export const getCompanyLeaves = async (req, res) => {
         if (userId) filter.userId = userId; // admin can drill down to specific user
 
         const leaves = await LeaveApplication.find(filter)
-            .populate("userId", "firstName lastName employeeCode profilePic companyId")
+            .populate({
+                path: "userId",
+                select: "firstName lastName employeeCode profilePic companyId department",
+                populate: { path: "department", select: "name" }
+            })
             .populate("leaveTypeId", "name code isPaid")
             .populate("approvedBy", "firstName lastName")
             .sort({ createdAt: -1 });
