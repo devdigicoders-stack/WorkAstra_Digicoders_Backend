@@ -205,8 +205,29 @@ export const checkOut = async (req, res) => {
         const userId = req.user.userId;
         const { latitude, longitude, address } = req.body;
 
-        const user = await User.findById(userId).select("companyId workShift firstName lastName");
+        const user = await User.findById(userId).select("companyId workShift branch firstName lastName");
+        if (!user) return res.status(404).json({ message: "User not found", success: false });
         const employeeName = `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "Employee";
+
+        // ── Geofence check (Branch level) ──
+        if (user.branch) {
+            const branch = await Branch.findById(user.branch);
+            if (branch?.isActive && branch?.location?.latitude) {
+                if (!latitude || !longitude) {
+                    return res.status(400).json({
+                        message: "Location is required to verify check-out within branch radius.",
+                        success: false
+                    });
+                }
+                const dist = haversineDistance(branch.location.latitude, branch.location.longitude, latitude, longitude);
+                if (dist > branch.geofenceRadius) {
+                    return res.status(403).json({
+                        message: `You are ${Math.round(dist)}m away from ${branch.name}. Must be within ${branch.geofenceRadius}m to check out.`,
+                        success: false
+                    });
+                }
+            }
+        }
 
         const date = todayDate();
         const attendance = await Attendance.findOne({ userId, date });

@@ -183,6 +183,18 @@ const UserSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: "Branch",
         default: null
+    },
+    securityPin: {
+        type: String,
+        default: null
+    },
+    payrollPinOtp: {
+        type: String,
+        default: null
+    },
+    payrollPinOtpExpiry: {
+        type: Date,
+        default: null
     }
 
 }, { timestamps: true })

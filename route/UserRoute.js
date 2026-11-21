@@ -1,5 +1,5 @@
 import express from "express";
-import { registerUser, loginUser, forgotPassword, resetPassword, adminChangePassword, getAllUsers, getAllUsersByCompany, verifyToken, getUserProfile, updateUserProfile, adminUpdateUser, toggleUserStatus, logoutUser, changePassword, deleteUser, saveFcmToken, getUpcomingEvents, getAllClients, getGreetingCardUrl, submitBankDetails, getMyBankDetails, approveBankDetails, rejectBankDetails, adminEditBankDetails, registerFace, verifySecurityPin } from "../controller/UserController.js";
+import { registerUser, loginUser, forgotPassword, resetPassword, adminChangePassword, getAllUsers, getAllUsersByCompany, verifyToken, getUserProfile, updateUserProfile, adminUpdateUser, toggleUserStatus, logoutUser, changePassword, deleteUser, saveFcmToken, getUpcomingEvents, getAllClients, getGreetingCardUrl, submitBankDetails, getMyBankDetails, approveBankDetails, rejectBankDetails, adminEditBankDetails, registerFace, verifySecurityPin, forgotPayrollPin, resetPayrollPin } from "../controller/UserController.js";
 import upload from "../middleware/multer.js";
 import { protect, hasPermission } from "../middleware/authMiddleware.js";
 
@@ -27,6 +27,8 @@ router.get("/clients", protect, getAllClients);
 
 // Security PIN routes
 router.post("/verify-pin", protect, verifySecurityPin);
+router.post("/forgot-payroll-pin", protect, forgotPayrollPin);
+router.post("/reset-payroll-pin", protect, resetPayrollPin);
 
 router.patch("/change-password", protect, changePassword);
 router.patch("/:id/change-password", protect, hasPermission("UPDATE_USER"), adminChangePassword);

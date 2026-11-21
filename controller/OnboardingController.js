@@ -8,6 +8,7 @@ import { createNotification } from "../utills/notificationHelper.js";
 import { sendMail } from "../utills/SendEmail.js";
 import { generateOfferPdfBuffer } from "../utills/offerPdfGenerator.js";
 import puppeteer from "puppeteer";
+import { encryptSalaryStructure, decryptSalaryStructure } from "../utills/cryptoHelper.js";
 
 // Helper to handle optional file uploads
 const handleFileUpload = async (files, fieldName, folder) => {
@@ -193,7 +194,7 @@ export const approveOnboarding = async (req, res) => {
 
         // Prepare Salary Structure in memory (Not saved yet)
         const salaryAmount = Number(basicSalary);
-        const salary = new SalaryStructure({
+        const salary = new SalaryStructure(encryptSalaryStructure({
             userId: user._id,
             companyId: form.companyId ? form.companyId._id : null,
             ctc: salaryAmount, // Setting the overall CTC
@@ -204,7 +205,7 @@ export const approveOnboarding = async (req, res) => {
             effectiveFrom: new Date().toISOString().slice(0, 7), // "YYYY-MM" format usually
             isActive: true,
             components: [] // Using components array as per schema
-        });
+        }));
 
         // Send Offer Letter Email
         const emailMsg = `
@@ -364,10 +365,11 @@ export const getUserOfferLetter = async (req, res) => {
             return res.status(403).json({ message: "Offer letter is only available after approval.", success: false });
         }
 
-        const salary = await SalaryStructure.findOne({ userId }).sort({ createdAt: -1 });
-        if (!salary) {
+        const rawSalary = await SalaryStructure.findOne({ userId }).sort({ createdAt: -1 });
+        if (!rawSalary) {
             return res.status(404).json({ message: "Salary structure not found", success: false });
         }
+        const salary = decryptSalaryStructure(rawSalary);
 
         res.status(200).json({
             success: true,
@@ -433,10 +435,11 @@ export const downloadOfferLetterPdf = async (req, res) => {
             return res.status(403).json({ message: "Offer letter is only available after approval.", success: false });
         }
 
-        const salary = await SalaryStructure.findOne({ userId }).sort({ createdAt: -1 });
-        if (!salary) {
+        const rawSalary = await SalaryStructure.findOne({ userId }).sort({ createdAt: -1 });
+        if (!rawSalary) {
             return res.status(404).json({ message: "Salary structure not found", success: false });
         }
+        const salary = decryptSalaryStructure(rawSalary);
 
         const company = user.companyId;
         const ctc = salary.ctc;

@@ -4,6 +4,7 @@ import { createNotification } from "../utills/notificationHelper.js";
 import cloudinary from "../utills/cloudinary.js";
 import { uploadManyToCloudinary } from "../middleware/multer.js";
 import { getSubordinateIds } from "../utills/hierarchyHelper.js";
+import { encryptField, decryptField, encryptProjectRecord, decryptProjectRecord } from "../utills/cryptoHelper.js";
 
 const isProjectAdmin = (project, userId, userRole, userPermissions) =>
     userRole === "super_admin" ||
@@ -43,7 +44,8 @@ export const createProject = async (req, res) => {
             : req.user.company;
         const project = await Project.create({
             name, description, status, startDate, endDate,
-            price: Number(price) || 0,
+            price: encryptField(Number(price) || 0),
+            receivedAmount: encryptField(0),
             members: members || [],
             companyId: projectCompanyId,
             clientIds: clientIds || [],
@@ -60,7 +62,7 @@ export const createProject = async (req, res) => {
             });
         }
 
-        res.status(201).json({ success: true, data: project });
+        res.status(201).json({ success: true, data: decryptProjectRecord(project) });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
@@ -124,7 +126,7 @@ export const getProjects = async (req, res) => {
         }
 
         const enrichedProjects = projects.map(p => {
-            const pObj = p.toObject();
+            const pObj = decryptProjectRecord(p);
             const stats = taskMap[p._id.toString()] || { total: 0, done: 0, pending: 0 };
             pObj.tasksCount = stats.total;
             pObj.completedTasksCount = stats.done;
@@ -157,7 +159,7 @@ export const getProjectById = async (req, res) => {
         if (!isAdmin && !isMember && !isCreator && !isClient)
             return res.status(403).json({ success: false, message: "Access denied" });
 
-        res.json({ success: true, data: project });
+        res.json({ success: true, data: decryptProjectRecord(project) });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }
@@ -165,9 +167,17 @@ export const getProjectById = async (req, res) => {
 
 export const updateProject = async (req, res) => {
     try {
+        const updateData = { ...req.body, updatedBy: req.user.userId };
+        if (updateData.price !== undefined) {
+            updateData.price = encryptField(Number(updateData.price) || 0);
+        }
+        if (updateData.receivedAmount !== undefined) {
+            updateData.receivedAmount = encryptField(Number(updateData.receivedAmount) || 0);
+        }
+
         const existing = await Project.findById(req.params.id);
         const project = await Project.findByIdAndUpdate(
-            req.params.id, { ...req.body, updatedBy: req.user.userId }, { returnDocument: 'after' }
+            req.params.id, updateData, { returnDocument: 'after' }
         );
         
         const oldMembers = existing ? existing.members.map(m => m.toString()) : [];
@@ -199,7 +209,7 @@ export const updateProject = async (req, res) => {
             });
         }
 
-        res.json({ success: true, data: project });
+        res.json({ success: true, data: decryptProjectRecord(project) });
     } catch (err) {
         res.status(500).json({ success: false, message: err.message });
     }

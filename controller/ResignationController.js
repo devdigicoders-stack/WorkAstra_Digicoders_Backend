@@ -2,6 +2,7 @@ import Resignation from "../models/ResignationSchema.js";
 import User from "../models/UserSchema.js";
 import PayrollRun from "../models/PayrollRunSchema.js";
 import SalaryStructure from "../models/SalaryStructureSchema.js";
+import { decryptSalaryStructure } from "../utills/cryptoHelper.js";
 import { createNotification } from "../utills/notificationHelper.js";
 import { getSubordinateIds } from "../utills/hierarchyHelper.js";
 import { generateExperienceLetterPDF } from "../utills/experienceLetterGenerator.js";
@@ -380,7 +381,8 @@ export const getSalarySlipsData = async (req, res) => {
 
         // If fewer than 3, generate dummies using SalaryStructure
         if (payrollRuns.length < 3) {
-            const structure = await SalaryStructure.findOne({ userId: user._id, isActive: true }).lean();
+            const rawStructure = await SalaryStructure.findOne({ userId: user._id, isActive: true }).lean();
+            const structure = rawStructure ? decryptSalaryStructure(rawStructure) : null;
             if (structure) {
                 // Determine the starting month to walk backwards from
                 const endDate = resignation.approvedLastWorkingDay ? new Date(resignation.approvedLastWorkingDay) : new Date();
@@ -511,7 +513,8 @@ export const downloadSalarySlips = async (req, res) => {
 
         // If fewer than 3, generate dummies using SalaryStructure
         if (payrollRuns.length < 3) {
-            const structure = await SalaryStructure.findOne({ userId: user._id, isActive: true }).lean();
+            const rawStructure = await SalaryStructure.findOne({ userId: user._id, isActive: true }).lean();
+            const structure = rawStructure ? decryptSalaryStructure(rawStructure) : null;
             if (structure) {
                 // Determine the starting month to walk backwards from
                 const endDate = resignation.approvedLastWorkingDay ? new Date(resignation.approvedLastWorkingDay) : new Date();

@@ -16,7 +16,7 @@ const PaymentSchema = new mongoose.Schema({
         default: null
     },
     amount: {
-        type: Number,
+        type: mongoose.Schema.Types.Mixed,
         required: true
     },
     transactionId: {

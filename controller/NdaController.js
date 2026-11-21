@@ -493,9 +493,20 @@ export const signClientNda = async (req, res) => {
 
         if (clientNda && clientNda.document && clientNda.document.url) {
             try {
-                // Fetch the PDF from URL (works for local uploads and cloudinary)
-                const pdfResponse = await axios.get(clientNda.document.url, { responseType: 'arraybuffer' });
-                const docBytes = pdfResponse.data;
+                let docBytes;
+                // If it's a local upload, read directly from disk for 100% reliability
+                if (clientNda.document.url.includes('/uploads/ndas/')) {
+                    const filename = path.basename(clientNda.document.url);
+                    const localFilePath = path.join(__dirname, '../uploads/ndas', filename);
+                    if (fs.existsSync(localFilePath)) {
+                        docBytes = fs.readFileSync(localFilePath);
+                    }
+                }
+                if (!docBytes) {
+                    // Fetch the PDF from URL (works for cloudinary and external URLs)
+                    const pdfResponse = await axios.get(clientNda.document.url, { responseType: 'arraybuffer' });
+                    docBytes = pdfResponse.data;
+                }
                 
                 const pdfDoc = await PDFDocument.load(docBytes);
                 const signatureImageBytes = Buffer.from(signatureBase64.split(',')[1], 'base64');

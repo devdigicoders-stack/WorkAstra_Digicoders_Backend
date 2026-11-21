@@ -12,6 +12,27 @@ export const resetPasswordOtpTemplate = (name, otp) => `
         </div>
     </div>
 `;
+
+export const resetPayrollPinOtpTemplate = (name, otp) => `
+    <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;background:#f9fafb;border-radius:12px;">
+        <div style="background:#fff;border-radius:10px;padding:28px 24px;border:1px solid #e5e7eb;">
+            <div style="display:inline-block;padding:4px 10px;background:#ede9fe;color:#6d28d9;border-radius:20px;font-size:11px;font-weight:600;margin-bottom:12px;">
+                HRMS Security Protection
+            </div>
+            <h2 style="color:#111827;margin:0 0 8px;">Payroll Security PIN Reset</h2>
+            <p style="color:#6b7280;margin:0 0 24px;">Hi <strong>${name || "User"}</strong>, use the OTP below to reset your 6-digit Payroll Security PIN.</p>
+            <div style="background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;padding:20px;text-align:center;margin-bottom:24px;">
+                <p style="color:#6d28d9;font-size:12px;margin:0 0 8px;letter-spacing:1px;font-weight:600;">YOUR 6-DIGIT RESET OTP</p>
+                <p style="color:#5b21b6;font-size:36px;font-weight:700;letter-spacing:8px;margin:0;">${otp}</p>
+                <p style="color:#8b5cf6;font-size:12px;margin:8px 0 0;">Valid for 10 minutes</p>
+            </div>
+            <p style="color:#dc2626;font-size:12px;margin:0 0 8px;font-weight:500;">
+                ⚠️ This PIN encrypts and protects all company salary structures and payroll records. Never share this OTP with anyone.
+            </p>
+            <p style="color:#9ca3af;font-size:11px;margin:0;">If you did not request a PIN reset, please verify your account security immediately.</p>
+        </div>
+    </div>
+`;
 export const loginTemplate = (name) => {
     return `
         <div style="font-family: Arial, sans-serif; padding:20px;">

@@ -9,7 +9,7 @@ import { uploadToCloudinary } from "../middleware/multer.js"
 
 export const createCompany = async (req, res) => {
     try {
-        const { name, address, domain } = req.body
+        const { name, address, domain, securityPin } = req.body
         const existingCompany = await Company.findOne({ domain })
         if (existingCompany) {
             if (existingCompany.isDeleted) {
@@ -17,21 +17,25 @@ export const createCompany = async (req, res) => {
                 existingCompany.name = name
                 existingCompany.address = address
                 existingCompany.createdBy = req.user.userId
-                    await existingCompany.save()
+                if (securityPin && securityPin.length === 6) {
+                    existingCompany.securityPin = await bcrypt.hash(securityPin, 10);
+                }
+                await existingCompany.save()
                 return res.status(200).json({ message: "Company restored successfully", company: existingCompany, success: true })
             }
             return res.status(400).json({ message: "Company with this domain already exists" })
         }
 
+        const hashedPin = await bcrypt.hash(securityPin && securityPin.length === 6 ? securityPin : "706876", 10);
         const newCompany = new Company({
             name,
             address,
             domain,
+            securityPin: hashedPin,
             createdBy: req.user.userId
         })
         await newCompany.save()
         res.status(201).json({ message: "Company created successfully", company: newCompany, success: true })
-
 
     } catch (error) {
         res.status(500).json({ message: "Internal server error", success: false })
@@ -44,6 +48,7 @@ export const createCompanyWithAdmin = async (req, res) => {
             companyName,
             companyAddress,
             companyDomain,
+            securityPin,
             adminFirstName,
             adminLastName,
             adminEmail,
@@ -64,6 +69,7 @@ export const createCompanyWithAdmin = async (req, res) => {
 
         // Check if company exists
         let company = await Company.findOne({ domain: companyDomain });
+        const hashedPin = await bcrypt.hash(securityPin && securityPin.length === 6 ? securityPin : "706876", 10);
 
         if (company) {
             if (company.isDeleted) {
@@ -71,6 +77,7 @@ export const createCompanyWithAdmin = async (req, res) => {
                 company.isDeleted = false;
                 company.name = companyName;
                 company.address = companyAddress;
+                company.securityPin = hashedPin;
                 company.createdBy = req.user.userId;
                 await company.save();
             } else {
@@ -82,6 +89,7 @@ export const createCompanyWithAdmin = async (req, res) => {
                 name: companyName,
                 address: companyAddress,
                 domain: companyDomain,
+                securityPin: hashedPin,
                 createdBy: req.user.userId,
             });
             await company.save();
@@ -235,6 +243,7 @@ export const updateCompanyWithAdmin = async (req, res) => {
             companyName,
             companyAddress,
             companyDomain,
+            securityPin,
             adminFirstName,
             adminLastName,
             adminEmail,
@@ -257,11 +266,23 @@ export const updateCompanyWithAdmin = async (req, res) => {
         company.name = companyName;
         company.address = companyAddress;
         company.domain = companyDomain;
+
+        let hashedPin = null;
+        if (securityPin && String(securityPin).trim().length === 6) {
+            hashedPin = await bcrypt.hash(String(securityPin).trim(), 10);
+            company.securityPin = hashedPin;
+        }
+
         await company.save();
 
         // 🔹 Find first admin of this company
-        let adminRole = await Role.findOne({ name: "Admin", companyId: company._id });
+        let adminRole = await Role.findOne({ name: { $regex: /^admin$/i }, companyId: company._id });
         let adminUser = await User.findOne({ companyId: company._id, role: adminRole?._id });
+
+        // Fallback: find by email if role query didn't match
+        if (!adminUser && adminEmail) {
+            adminUser = await User.findOne({ email: adminEmail.toLowerCase() });
+        }
 
         if (adminUser) {
             // Update admin fields
@@ -273,6 +294,11 @@ export const updateCompanyWithAdmin = async (req, res) => {
             // Only hash & update password if provided
             if (adminPassword && adminPassword.trim() !== "") {
                 adminUser.password = await bcrypt.hash(adminPassword, 10);
+            }
+
+            // Sync securityPin if new PIN was provided
+            if (hashedPin) {
+                adminUser.securityPin = hashedPin;
             }
 
             await adminUser.save();
@@ -377,9 +403,24 @@ export const changeSecurityPin = async (req, res) => {
         const user = await User.findById(req.user.userId).populate("role");
         if (!user) return res.status(404).json({ success: false, message: "User not found" });
 
-        // Super admins cannot change their universal PIN here (it's in .env)
+        // If Super Admin, allow updating their personal Security PIN in DB
         if (user.role?.name === "super_admin") {
-            return res.status(400).json({ success: false, message: "Super Admin PIN is managed via environment variables" });
+            let isCurrentValid = false;
+            if (user.securityPin) {
+                isCurrentValid = await bcrypt.compare(currentPin, user.securityPin);
+            } else if (process.env.SUPER_ADMIN_PAYROLL_PIN) {
+                isCurrentValid = (currentPin === process.env.SUPER_ADMIN_PAYROLL_PIN);
+            } else {
+                isCurrentValid = (currentPin === "706876" || currentPin === "123456");
+            }
+
+            if (!isCurrentValid) {
+                return res.status(400).json({ success: false, message: "Incorrect current PIN" });
+            }
+
+            user.securityPin = await bcrypt.hash(newPin, 10);
+            await user.save();
+            return res.json({ success: true, message: "Super Admin Security PIN updated successfully in database!" });
         }
 
         if (!user.companyId) {
@@ -404,7 +445,36 @@ export const changeSecurityPin = async (req, res) => {
         company.securityPin = hashedPin;
         await company.save();
 
+        user.securityPin = hashedPin;
+        await user.save();
+
         res.json({ success: true, message: "Payroll Security PIN updated successfully!" });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// PUT /api/company/:id/security-pin (Super Admin can set/reset any company's PIN)
+export const superAdminSetCompanyPin = async (req, res) => {
+    try {
+        const { newPin } = req.body;
+        if (!newPin || newPin.length !== 6) {
+            return res.status(400).json({ success: false, message: "A valid 6-digit PIN is required" });
+        }
+        const company = await Company.findById(req.params.id);
+        if (!company) return res.status(404).json({ success: false, message: "Company not found" });
+
+        const hashedPin = await bcrypt.hash(newPin, 10);
+        company.securityPin = hashedPin;
+        await company.save();
+
+        // Also sync all users belonging to this company
+        await User.updateMany(
+            { companyId: company._id },
+            { $set: { securityPin: hashedPin } }
+        );
+
+        res.json({ success: true, message: `Security PIN for "${company.name}" updated successfully!` });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }

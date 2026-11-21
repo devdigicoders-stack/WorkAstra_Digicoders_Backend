@@ -3,6 +3,7 @@ import LeadFieldConfig from "../models/LeadFieldConfigSchema.js";
 import { createNotification } from "../utills/notificationHelper.js";
 import { parse } from "csv-parse/sync";
 import { getSubordinateIds } from "../utills/hierarchyHelper.js";
+import { encryptField } from "../utills/cryptoHelper.js";
 
 // companyId comes from JWT — no extra DB call needed
 const cid = (req) => req.user.company;
@@ -212,7 +213,8 @@ export const updateLead = async (req, res) => {
                     name: lead.orgName || `Project for ${lead.contactNumber}`,
                     description: `Automatically created from Lead: ${lead.orgName}`,
                     status: "active",
-                    price: priceVal,
+                    price: encryptField(priceVal),
+                    receivedAmount: encryptField(0),
                     companyId: lead.companyId || req.user.company,
                     members: [], // User requested to leave members empty for manual assignment
                     clientIds: [], // User requested to leave clients empty for manual assignment
@@ -220,14 +222,14 @@ export const updateLead = async (req, res) => {
                     createdBy: req.user.userId
                 });
             } else if (priceVal > 0) {
-                existingProject.price = priceVal;
+                existingProject.price = encryptField(priceVal);
                 await existingProject.save();
             }
         } else if ($set.dealPrice !== undefined) {
             const { default: Project } = await import("../models/ProjectSchema.js");
             const existingProject = await Project.findOne({ leadId: lead._id });
             if (existingProject) {
-                existingProject.price = Number($set.dealPrice) || 0;
+                existingProject.price = encryptField(Number($set.dealPrice) || 0);
                 await existingProject.save();
             }
         }

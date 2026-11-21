@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 const payrollComponentSchema = new mongoose.Schema({
     name:   { type: String },
     type:   { type: String, enum: ["earning", "deduction"] },
-    amount: { type: Number },
+    amount: { type: mongoose.Schema.Types.Mixed },
 }, { _id: false });
 
 const PayrollRunSchema = new mongoose.Schema({
@@ -20,12 +20,12 @@ const PayrollRunSchema = new mongoose.Schema({
     paidLeaveDays:     { type: Number, default: 0 },
     lopDays:           { type: Number, default: 0 }, // loss of pay
 
-    // Salary breakdown (computed)
+    // Salary breakdown (computed - supports AES-256 encrypted strings)
     components:        { type: [payrollComponentSchema], default: [] },
-    grossEarnings:     { type: Number, default: 0 },
-    totalDeductions:   { type: Number, default: 0 },
-    lopDeduction:      { type: Number, default: 0 },
-    netSalary:         { type: Number, default: 0 },
+    grossEarnings:     { type: mongoose.Schema.Types.Mixed, default: 0 },
+    totalDeductions:   { type: mongoose.Schema.Types.Mixed, default: 0 },
+    lopDeduction:      { type: mongoose.Schema.Types.Mixed, default: 0 },
+    netSalary:         { type: mongoose.Schema.Types.Mixed, default: 0 },
 
     // Status
     status: {

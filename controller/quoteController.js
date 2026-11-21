@@ -820,3 +820,74 @@ export const updateQuoteFollowUp = async (req, res) => {
         res.status(500).json({ message: "Failed to update follow-up", success: false });
     }
 };
+
+// Get all quotes / final proposal for a specific client
+export const getClientQuotes = async (req, res) => {
+    try {
+        const { clientId } = req.params;
+        const { default: Project } = await import("../models/ProjectSchema.js");
+
+        const client = await User.findById(clientId).select("firstName lastName email phone");
+        if (!client) {
+            return res.status(404).json({ success: false, message: "Client not found" });
+        }
+
+        // 1. Find all projects of this client
+        const projects = await Project.find({
+            $or: [
+                { clientIds: clientId },
+                { clientId: clientId }
+            ],
+            isDeleted: false
+        })
+            .select("_id name price status leadId createdAt")
+            .lean();
+
+        const leadIds = [];
+        projects.forEach(p => {
+            if (p.leadId) leadIds.push(p.leadId.toString());
+        });
+
+        // 2. Also find any leads that match client's email or phone
+        const leadFilters = [];
+        if (client.email) leadFilters.push({ email: client.email.toLowerCase() });
+        if (client.phone) leadFilters.push({ contactNumber: client.phone });
+
+        if (leadFilters.length > 0) {
+            const matchedLeads = await Lead.find({ $or: leadFilters }).select("_id").lean();
+            matchedLeads.forEach(l => {
+                if (!leadIds.includes(l._id.toString())) {
+                    leadIds.push(l._id.toString());
+                }
+            });
+        }
+
+        // 3. Find all quotes for these leadIds
+        let quotes = [];
+        if (leadIds.length > 0) {
+            quotes = await Quote.find({ leadId: { $in: leadIds } })
+                .populate(quotePopulate)
+                .sort({ createdAt: -1 })
+                .lean();
+        }
+
+        // 4. Attach matching project info to each quote
+        const quotesWithProject = quotes.map(q => {
+            const qLeadId = q.leadId?._id?.toString() || q.leadId?.toString();
+            const matchedProject = projects.find(p => p.leadId?.toString() === qLeadId);
+            return {
+                ...q,
+                linkedProject: matchedProject || null
+            };
+        });
+
+        res.status(200).json({
+            success: true,
+            quotes: quotesWithProject,
+            projects
+        });
+    } catch (error) {
+        console.error("Error fetching client quotes:", error);
+        res.status(500).json({ success: false, message: "Failed to fetch client quotes" });
+    }
+};

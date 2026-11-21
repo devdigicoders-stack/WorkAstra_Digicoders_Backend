@@ -4,10 +4,11 @@ import { generateGreetingCard } from '../utills/cardGenerator.js';
 import Role from "../models/roleSchema.js";
 import Project from "../models/ProjectSchema.js";
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
 import cloudinary from "../utills/cloudinary.js";
 import { sendMail } from "../utills/SendEmail.js";
 import { genrateToken } from "../middleware/authMiddleware.js";
-import { loginTemplate, userCreatedTemplate, resetPasswordOtpTemplate } from "../utills/emailTemplates/userTemplate.js";
+import { loginTemplate, userCreatedTemplate, resetPasswordOtpTemplate, resetPayrollPinOtpTemplate } from "../utills/emailTemplates/userTemplate.js";
 import EnvData from "../config/EnvData.js";
 import { createNotification } from "../utills/notificationHelper.js";
 import { uploadToCloudinary } from "../middleware/multer.js";
@@ -889,27 +890,191 @@ export const verifySecurityPin = async (req, res) => {
         const user = await User.findById(req.user.userId).populate("role");
         if (!user) return res.status(404).json({ message: "User not found", success: false });
 
-        // If user is super admin, check against environment variable
-        if (user.role?.name === "super_admin") {
-            const superAdminPin = process.env.SUPER_ADMIN_PAYROLL_PIN || "706876";
-            if (pin === superAdminPin) {
-                return res.json({ message: "PIN verified", success: true });
-            } else {
-                return res.status(400).json({ message: "Invalid Security PIN", success: false });
+        const createPayrollToken = () => {
+            return jwt.sign(
+                { userId: user._id, role: user.role?.name, companyId: user.companyId, unlocked: true },
+                process.env.JWT_SECRET || "Tom_and_Jerry",
+                { expiresIn: "30m" }
+            );
+        };
+
+        const isSuperAdmin = user.role?.name === "super_admin";
+        let isMatch = false;
+
+        if (isSuperAdmin) {
+            // 1. Super Admin: check user's own securityPin in database
+            if (user.securityPin) {
+                isMatch = await bcrypt.compare(pin, user.securityPin);
+            }
+            // Super Admin can also unlock with company's PIN if user belongs to or views a company
+            if (!isMatch && user.companyId) {
+                const company = await Company.findById(user.companyId);
+                if (company?.securityPin) {
+                    isMatch = await bcrypt.compare(pin, company.securityPin);
+                }
+            }
+            // Fallback for initial setup if no DB pin has been configured yet
+            if (!isMatch && !user.securityPin && process.env.SUPER_ADMIN_PAYROLL_PIN) {
+                isMatch = (pin === process.env.SUPER_ADMIN_PAYROLL_PIN);
+            }
+        } else {
+            // 2. Company Admin: Company's securityPin is the single authoritative source of truth!
+            if (user.companyId) {
+                const company = await Company.findById(user.companyId);
+                if (company?.securityPin) {
+                    isMatch = await bcrypt.compare(pin, company.securityPin);
+                }
+            }
+            // Fallback only if company has no securityPin configured yet
+            if (!isMatch && user.securityPin && !user.companyId) {
+                isMatch = await bcrypt.compare(pin, user.securityPin);
             }
         }
 
-        // If normal admin/user, check against company PIN
-        if (!user.companyId) return res.status(400).json({ message: "User does not belong to a company", success: false });
-        
-        const company = await Company.findById(user.companyId);
-        if (!company || !company.securityPin) return res.status(400).json({ message: "Company Security PIN not set. Contact Super Admin.", success: false, notSet: true });
-        
-        const isMatch = await bcrypt.compare(pin, company.securityPin);
-        if (!isMatch) return res.status(400).json({ message: "Invalid Security PIN", success: false });
-        
-        res.json({ message: "PIN verified", success: true });
+        if (!isMatch) {
+            return res.status(400).json({ message: "Invalid Security PIN", success: false });
+        }
+
+        const payrollToken = createPayrollToken();
+        res.json({ message: "PIN verified", success: true, payrollToken });
     } catch (error) {
         res.status(500).json({ message: error.message, success: false });
+    }
+};
+
+// POST /api/user/forgot-payroll-pin (Sends OTP to user's registered email)
+export const forgotPayrollPin = async (req, res) => {
+    try {
+        const user = await User.findById(req.user.userId).populate("role");
+        if (!user) return res.status(404).json({ message: "User not found", success: false });
+
+        const isAdminRole = ["super_admin", "admin"].includes(user.role?.name);
+        if (!isAdminRole) {
+            return res.status(403).json({ message: "Only Admins and Super Admins have Payroll PIN access", success: false });
+        }
+
+        const otp = generateOTP();
+        user.payrollPinOtp = otp;
+        user.payrollPinOtpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+        await user.save();
+
+        const email = user.email;
+        console.log(`\n================== [PAYROLL PIN OTP REQUEST] ==================`);
+        console.log(`👤 User: ${user.firstName} ${user.lastName} (${email}) | Role: ${user.role?.name}`);
+        console.log(`🔑 Generated 6-Digit OTP: >>> ${otp} <<< (Valid for 10 minutes)`);
+
+        let mailResult = { ok: false, error: "No email" };
+        if (email) {
+            console.log(`📧 Sending OTP email to ${email}...`);
+            mailResult = await sendMail({
+                email,
+                title: "WorkAstra HRMS - Payroll Security PIN Reset OTP",
+                msg: resetPayrollPinOtpTemplate(user.firstName, otp)
+            });
+            if (mailResult?.ok) {
+                console.log(`✅ [EMAIL SUCCESS] OTP email successfully sent! Message ID: ${mailResult.messageId}`);
+            } else {
+                console.error(`⚠️ [EMAIL WARNING] Failed to deliver OTP email: ${mailResult?.error || "Check email credentials"}`);
+                console.log(`💡 [DEV TIP] You can use OTP: ${otp} directly from this terminal.`);
+            }
+        } else {
+            console.error(`❌ [ERROR] No registered email address found for this user account.`);
+        }
+        console.log(`================================================================\n`);
+
+        // Mask email for privacy (e.g. s***n@hrms.com)
+        const [localPart, domainPart] = (email || "").split("@");
+        const maskedLocal = localPart ? localPart[0] + "***" + (localPart.length > 1 ? localPart[localPart.length - 1] : "") : "";
+        const maskedEmail = maskedLocal && domainPart ? `${maskedLocal}@${domainPart}` : email;
+
+        res.status(200).json({
+            message: `OTP sent successfully to your registered email (${maskedEmail})`,
+            success: true,
+            email: maskedEmail
+        });
+    } catch (error) {
+        console.error(`❌ [EXCEPTION in forgotPayrollPin]:`, error);
+        res.status(500).json({ message: error.message || "Failed to send reset OTP", success: false });
+    }
+};
+
+// POST /api/user/reset-payroll-pin (Verifies OTP and resets Payroll PIN)
+export const resetPayrollPin = async (req, res) => {
+    try {
+        const { otp, newPin } = req.body;
+        console.log(`\n================== [PAYROLL PIN RESET ATTEMPT] ==================`);
+        console.log(`📥 Incoming OTP: ${otp} | New PIN: ******`);
+
+        if (!otp || !newPin) {
+            console.error(`❌ [ERROR] Missing OTP or newPin in request body.`);
+            return res.status(400).json({ message: "OTP and new 6-digit PIN are required", success: false });
+        }
+
+        if (!/^\d{6}$/.test(String(newPin).trim())) {
+            console.error(`❌ [ERROR] New PIN format invalid (not 6 digits): ${newPin}`);
+            return res.status(400).json({ message: "New PIN must be exactly 6 digits", success: false });
+        }
+
+        const user = await User.findById(req.user.userId).populate("role");
+        if (!user) {
+            console.error(`❌ [ERROR] User not found for ID: ${req.user.userId}`);
+            return res.status(404).json({ message: "User not found", success: false });
+        }
+
+        console.log(`👤 User: ${user.firstName} ${user.lastName} (${user.email}) | Role: ${user.role?.name}`);
+        console.log(`🔍 Comparing OTP: Entered [${String(otp).trim()}] vs Stored [${user.payrollPinOtp}]`);
+
+        if (!user.payrollPinOtp || user.payrollPinOtp !== String(otp).trim()) {
+            console.error(`❌ [ERROR] Invalid OTP! Does not match stored OTP.`);
+            return res.status(400).json({ message: "Invalid OTP", success: false });
+        }
+
+        if (user.payrollPinOtpExpiry && user.payrollPinOtpExpiry < new Date()) {
+            console.error(`❌ [ERROR] OTP expired at ${user.payrollPinOtpExpiry}. Current time: ${new Date()}`);
+            return res.status(400).json({ message: "OTP has expired. Please request a new one.", success: false });
+        }
+
+        const hashedPin = await bcrypt.hash(String(newPin).trim(), 10);
+
+        // If Super Admin, update user's own securityPin
+        if (user.role?.name === "super_admin") {
+            user.securityPin = hashedPin;
+            console.log(`🔐 Super Admin securityPin updated with bcrypt hash.`);
+        } else if (user.companyId) {
+            // For Company Admin, update both company.securityPin and user.securityPin
+            const company = await Company.findById(user.companyId);
+            if (company) {
+                company.securityPin = hashedPin;
+                await company.save();
+                console.log(`🏢 Company (${company.name}) securityPin updated with bcrypt hash.`);
+            }
+            user.securityPin = hashedPin;
+        } else {
+            user.securityPin = hashedPin;
+        }
+
+        // Clear OTP
+        user.payrollPinOtp = null;
+        user.payrollPinOtpExpiry = null;
+        await user.save();
+
+        console.log(`✅ [SUCCESS] Payroll PIN reset successfully completed! OTP cleared.`);
+        console.log(`=================================================================\n`);
+
+        // Also issue a fresh 30-minute payrollToken so user doesn't have to re-enter
+        const payrollToken = jwt.sign(
+            { userId: user._id, role: user.role?.name, companyId: user.companyId, unlocked: true },
+            process.env.JWT_SECRET || "Tom_and_Jerry",
+            { expiresIn: "30m" }
+        );
+
+        res.status(200).json({
+            message: "Payroll Security PIN has been reset successfully!",
+            success: true,
+            payrollToken
+        });
+    } catch (error) {
+        console.error(`❌ [EXCEPTION in resetPayrollPin]:`, error);
+        res.status(500).json({ message: error.message || "Failed to reset PIN", success: false });
     }
 };

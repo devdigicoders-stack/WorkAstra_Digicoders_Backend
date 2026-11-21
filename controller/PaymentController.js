@@ -5,6 +5,7 @@ import Project from "../models/ProjectSchema.js";
 import { uploadToCloudinary } from "../middleware/multer.js";
 import { createNotification } from "../utills/notificationHelper.js";
 import { getSubordinateIds } from "../utills/hierarchyHelper.js";
+import { encryptField, decryptField, encryptPaymentRecord, decryptPaymentRecord } from "../utills/cryptoHelper.js";
 
 // Update global UPI details
 export const updateUpiDetails = async (req, res) => {
@@ -71,8 +72,8 @@ export const submitPayment = async (req, res) => {
             userId,
             companyId,
             projectId: validProjectId,
-            amount: Number(amount),
-            transactionId,
+            amount: encryptField(Number(amount)),
+            transactionId: encryptField(transactionId),
             remark,
             screenshot: {
                 url: screenshot.url,
@@ -110,7 +111,7 @@ export const submitPayment = async (req, res) => {
             console.error("Notification error in submitPayment:", notifErr);
         }
 
-        res.status(201).json({ message: "Payment submitted successfully", success: true, payment });
+        res.status(201).json({ message: "Payment submitted successfully", success: true, payment: decryptPaymentRecord(payment) });
     } catch (error) {
         console.error("Error submitting payment:", error);
         res.status(500).json({ message: "Failed to submit payment", success: false });
@@ -124,7 +125,8 @@ export const getMyPayments = async (req, res) => {
         const payments = await Payment.find({ userId })
             .populate("projectId", "name price receivedAmount status")
             .sort({ createdAt: -1 });
-        res.status(200).json({ success: true, payments });
+        const decryptedPayments = payments.map(p => decryptPaymentRecord(p));
+        res.status(200).json({ success: true, payments: decryptedPayments });
     } catch (error) {
         console.error("Error fetching payments:", error);
         res.status(500).json({ message: "Failed to fetch payments", success: false });
@@ -153,7 +155,8 @@ export const getAllPayments = async (req, res) => {
             .populate("projectId", "name price receivedAmount status")
             .sort({ createdAt: -1 });
 
-        res.status(200).json({ success: true, payments });
+        const decryptedPayments = payments.map(p => decryptPaymentRecord(p));
+        res.status(200).json({ success: true, payments: decryptedPayments });
     } catch (error) {
         console.error("Error fetching all payments:", error);
         res.status(500).json({ message: "Failed to fetch all payments", success: false });
@@ -201,16 +204,17 @@ export const updatePaymentStatus = async (req, res) => {
                 projectId: payment.projectId,
                 status: "approved"
             });
-            const totalReceived = approvedPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-            await Project.findByIdAndUpdate(payment.projectId, { receivedAmount: totalReceived });
+            const totalReceived = approvedPayments.reduce((sum, p) => sum + (Number(decryptField(p.amount)) || 0), 0);
+            await Project.findByIdAndUpdate(payment.projectId, { receivedAmount: encryptField(totalReceived) });
         }
 
         // Notify user about payment status
         try {
+            const readableAmount = decryptField(payment.amount);
             await createNotification({
                 userId: payment.userId,
                 title: `Payment ${status.charAt(0).toUpperCase() + status.slice(1)}`,
-                message: `Your payment of ₹${payment.amount} has been ${status}.`,
+                message: `Your payment of ₹${readableAmount} has been ${status}.`,
                 type: "system",
                 createdBy: reviewedBy
             });
@@ -218,7 +222,7 @@ export const updatePaymentStatus = async (req, res) => {
             console.error("Notification error in updatePaymentStatus:", notifErr);
         }
 
-        res.status(200).json({ message: `Payment ${status} successfully`, success: true, payment });
+        res.status(200).json({ message: `Payment ${status} successfully`, success: true, payment: decryptPaymentRecord(payment) });
     } catch (error) {
         console.error("Error updating payment status:", error);
         res.status(500).json({ message: "Failed to update payment status", success: false });
@@ -271,13 +275,14 @@ export const getProjectFinances = async (req, res) => {
             if (!projectPaymentsMap[pid]) {
                 projectPaymentsMap[pid] = { approved: 0, pending: 0, count: 0, items: [] };
             }
+            const decAmount = Number(decryptField(pay.amount)) || 0;
             if (pay.status === "approved") {
-                projectPaymentsMap[pid].approved += Number(pay.amount) || 0;
+                projectPaymentsMap[pid].approved += decAmount;
             } else if (pay.status === "pending") {
-                projectPaymentsMap[pid].pending += Number(pay.amount) || 0;
+                projectPaymentsMap[pid].pending += decAmount;
             }
             projectPaymentsMap[pid].count += 1;
-            projectPaymentsMap[pid].items.push(pay);
+            projectPaymentsMap[pid].items.push(decryptPaymentRecord(pay));
         });
 
         let totalValuation = 0;
@@ -288,7 +293,7 @@ export const getProjectFinances = async (req, res) => {
         const enrichedProjects = projects.map(proj => {
             const pid = proj._id.toString();
             const payInfo = projectPaymentsMap[pid] || { approved: 0, pending: 0, count: 0, items: [] };
-            const dealPrice = Number(proj.price) || 0;
+            const dealPrice = Number(decryptField(proj.price)) || 0;
             const received = payInfo.approved;
             const due = Math.max(0, dealPrice - received);
 
@@ -334,5 +339,130 @@ export const getProjectFinances = async (req, res) => {
     } catch (error) {
         console.error("Error fetching project finances:", error);
         res.status(500).json({ message: "Failed to fetch project finances", success: false });
+    }
+};
+
+// Get finances & payments for a specific client
+export const getClientFinances = async (req, res) => {
+    try {
+        const { clientId } = req.params;
+        const currentUserId = req.user.userId;
+        const isSuperAdmin = req.user.role === "super_admin";
+        const isAdmin = req.user.role === "admin";
+
+        // Access check: super_admin, admin, permissions, or the client themselves
+        if (!isSuperAdmin && !isAdmin && currentUserId !== clientId) {
+            const hasPerm = (req.user.permissions || []).some(p =>
+                ["MANAGE_PAYMENTS", "VIEW_ALL_PROJECTS", "CREATE_PROJECT"].includes(p)
+            );
+            if (!hasPerm) {
+                return res.status(403).json({ success: false, message: "Unauthorized access to client finances" });
+            }
+        }
+
+        // 1. Find all projects where this user is client (in clientIds or clientId)
+        const projects = await Project.find({
+            $or: [
+                { clientIds: clientId },
+                { clientId: clientId }
+            ],
+            isDeleted: false
+        })
+            .populate("createdBy", "firstName lastName")
+            .populate("clientIds", "firstName lastName email profilePic")
+            .sort({ createdAt: -1 })
+            .lean();
+
+        const projectIds = projects.map(p => p._id);
+
+        // 2. Find all payments for this client: either userId === clientId OR projectId in client's projectIds
+        const paymentFilter = projectIds.length > 0 
+            ? { $or: [{ userId: clientId }, { projectId: { $in: projectIds } }] }
+            : { userId: clientId };
+
+        const payments = await Payment.find(paymentFilter)
+            .populate("projectId", "name price status")
+            .populate("userId", "firstName lastName email profilePic")
+            .populate("reviewedBy", "firstName lastName")
+            .sort({ createdAt: -1 })
+            .lean();
+
+        // 3. Map payments by project
+        const projectPaymentsMap = {};
+        payments.forEach(pay => {
+            const pid = pay.projectId?._id?.toString() || pay.projectId?.toString();
+            if (pid) {
+                if (!projectPaymentsMap[pid]) {
+                    projectPaymentsMap[pid] = { approved: 0, pending: 0, count: 0, items: [] };
+                }
+                const decAmount = Number(decryptField(pay.amount)) || 0;
+                if (pay.status === "approved") {
+                    projectPaymentsMap[pid].approved += decAmount;
+                } else if (pay.status === "pending") {
+                    projectPaymentsMap[pid].pending += decAmount;
+                }
+                projectPaymentsMap[pid].count += 1;
+                projectPaymentsMap[pid].items.push(decryptPaymentRecord(pay));
+            }
+        });
+
+        // 4. Enrich projects with finance calculations
+        let totalValuation = 0;
+        let totalReceived = 0;
+        let totalDue = 0;
+        let totalPendingApproval = 0;
+
+        const enrichedProjects = projects.map(proj => {
+            const pid = proj._id.toString();
+            const payInfo = projectPaymentsMap[pid] || { approved: 0, pending: 0, count: 0, items: [] };
+            const dealPrice = Number(decryptField(proj.price)) || 0;
+            const received = payInfo.approved;
+            const due = Math.max(0, dealPrice - received);
+
+            totalValuation += dealPrice;
+            totalReceived += received;
+            totalDue += due;
+            totalPendingApproval += payInfo.pending;
+
+            let paymentStatus = "unpaid";
+            if (dealPrice > 0) {
+                if (received >= dealPrice) paymentStatus = "paid";
+                else if (received > 0) paymentStatus = "partial";
+            } else if (received > 0) {
+                paymentStatus = "paid";
+            }
+
+            return {
+                ...proj,
+                price: dealPrice,
+                receivedAmount: received,
+                dueAmount: due,
+                pendingApprovalAmount: payInfo.pending,
+                paymentStatus,
+                paymentsCount: payInfo.count,
+                recentPayments: payInfo.items
+            };
+        });
+
+        const decryptedPayments = payments.map(p => decryptPaymentRecord(p));
+
+        res.status(200).json({
+            success: true,
+            summary: {
+                totalValuation,
+                totalReceived,
+                totalDue,
+                totalPendingApproval,
+                totalProjects: projects.length,
+                fullyPaidProjects: enrichedProjects.filter(p => p.paymentStatus === "paid").length,
+                partialProjects: enrichedProjects.filter(p => p.paymentStatus === "partial").length,
+                unpaidProjects: enrichedProjects.filter(p => p.paymentStatus === "unpaid").length,
+            },
+            projects: enrichedProjects,
+            payments: decryptedPayments
+        });
+    } catch (error) {
+        console.error("Error fetching client finances:", error);
+        res.status(500).json({ success: false, message: "Failed to fetch client finances" });
     }
 };

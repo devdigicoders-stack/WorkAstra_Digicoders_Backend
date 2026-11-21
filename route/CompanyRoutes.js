@@ -1,5 +1,5 @@
 import express from 'express'
-import { createCompany, createCompanyWithAdmin, updateCompanyWithAdmin, getCompanies, getAllCompanies, getCompanyById, updateCompany, deleteCompany, restoreCompany, toggleCompanyStatus, uploadCompanyIcon, changeSecurityPin } from '../controller/CompanyController.js'
+import { createCompany, createCompanyWithAdmin, updateCompanyWithAdmin, getCompanies, getAllCompanies, getCompanyById, updateCompany, deleteCompany, restoreCompany, toggleCompanyStatus, uploadCompanyIcon, changeSecurityPin, superAdminSetCompanyPin } from '../controller/CompanyController.js'
 import { protect, authorize } from '../middleware/authMiddleware.js'
 import upload from '../middleware/multer.js'
 
@@ -10,6 +10,7 @@ router.post("/with-admin",    protect, authorize("super_admin"), createCompanyWi
 router.get("/",               protect, getCompanies)
 router.get("/all",            protect, authorize("super_admin"), getAllCompanies)
 router.put("/change-pin",     protect, changeSecurityPin)
+router.put("/:id/security-pin", protect, authorize("super_admin"), superAdminSetCompanyPin)
 router.get("/:id",            protect, getCompanyById)                          // admin can view own company
 router.put("/:id",            protect, updateCompany)                           // admin can update own company
 router.put("/:id/with-admin", protect, authorize("super_admin"), updateCompanyWithAdmin)

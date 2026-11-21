@@ -8,6 +8,20 @@ import Holiday from "../models/HolidaySchema.js";
 import PenaltyDate from "../models/PenaltyDateSchema.js";
 import { createNotification } from "../utills/notificationHelper.js";
 import { getSubordinateIds } from "../utills/hierarchyHelper.js";
+import jwt from "jsonwebtoken";
+import { encryptField, decryptField, encryptPayrollRecord, decryptPayrollRecord, maskPayrollRecord, decryptSalaryStructure } from "../utills/cryptoHelper.js";
+
+// Verify if request includes an authenticated payroll unlock token
+const isPayrollTokenValid = (req) => {
+    const token = req.headers["x-payroll-token"];
+    if (!token) return false;
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || "Tom_and_Jerry");
+        return !!decoded?.unlocked;
+    } catch {
+        return false;
+    }
+};
 
 // Count total working days in a month (excluding weekends + holidays)
 const getWorkingDays = async (month, companyId, weekOff = [0, 6]) => {
@@ -84,8 +98,9 @@ export const generatePayroll = async (req, res) => {
                 }
 
                 // Get active salary structure (latest effective)
-                const structure = await SalaryStructure.findOne({ userId: emp._id, isActive: true }).sort({ effectiveFrom: -1, createdAt: -1 });
-                if (!structure) { results.skipped++; results.skippedReasons = results.skippedReasons || []; results.skippedReasons.push({ userId: emp._id, reason: "No active salary structure" }); continue; }
+                const rawStructure = await SalaryStructure.findOne({ userId: emp._id, isActive: true }).sort({ effectiveFrom: -1, createdAt: -1 });
+                if (!rawStructure) { results.skipped++; results.skippedReasons = results.skippedReasons || []; results.skippedReasons.push({ userId: emp._id, reason: "No active salary structure" }); continue; }
+                const structure = decryptSalaryStructure(rawStructure);
 
                 // Get week-off from work shift
                 const WorkShift = (await import("../models/workShiftSchema.js")).default;
@@ -221,11 +236,11 @@ export const generatePayroll = async (req, res) => {
                     halfDays,
                     paidLeaveDays: effectivePaidLeave,
                     lopDays,
-                    components,
-                    grossEarnings: parseFloat(grossEarnings.toFixed(2)),
-                    totalDeductions: parseFloat(totalDeductions.toFixed(2)),
-                    lopDeduction,
-                    netSalary,
+                    components: components.map(c => ({ ...c, amount: encryptField(c.amount) })),
+                    grossEarnings: encryptField(parseFloat(grossEarnings.toFixed(2))),
+                    totalDeductions: encryptField(parseFloat(totalDeductions.toFixed(2))),
+                    lopDeduction: encryptField(lopDeduction),
+                    netSalary: encryptField(netSalary),
                     status: "draft",
                     createdBy: req.user.userId,
                 });
@@ -249,7 +264,7 @@ export const generatePayroll = async (req, res) => {
 // GET /api/payroll/run?month=2025-06
 export const getPayrollRuns = async (req, res) => {
     try {
-        const { month, status } = req.query;
+        const { month, status, userId } = req.query;
         const reqUser = await User.findById(req.user.userId).select("companyId role").populate("role", "name");
         const filter = {};
 
@@ -260,6 +275,16 @@ export const getPayrollRuns = async (req, res) => {
             // Admin B2's team payroll is NOT visible to Admin B1
             const allowedIds = await getSubordinateIds(req.user.userId);
             filter.userId = { $in: allowedIds };
+        }
+
+        if (userId) {
+            if (filter.userId && filter.userId.$in) {
+                if (filter.userId.$in.map(String).includes(String(userId))) {
+                    filter.userId = userId;
+                }
+            } else {
+                filter.userId = userId;
+            }
         }
 
         if (month) filter.month = month;
@@ -277,7 +302,10 @@ export const getPayrollRuns = async (req, res) => {
             .populate("approvedBy", "firstName lastName")
             .sort({ month: -1, createdAt: -1 });
 
-        res.status(200).json({ runs, success: true });
+        const verified = isPayrollTokenValid(req);
+        const formattedRuns = runs.map(run => verified ? decryptPayrollRecord(run) : maskPayrollRecord(run));
+
+        res.status(200).json({ runs: formattedRuns, isLocked: !verified, success: true });
     } catch (err) {
         res.status(500).json({ message: err.message, success: false });
     }
@@ -326,7 +354,16 @@ export const getMyPayslips = async (req, res) => {
             .populate("approvedBy", "firstName lastName")
             .sort({ month: -1, createdAt: -1 });
 
-        res.status(200).json({ runs, payslips: runs, success: true });
+        const verified = isPayrollTokenValid(req);
+        const formattedRuns = runs.map(run => {
+            const isSelf = String(run.userId?._id || run.userId) === String(req.user.userId);
+            if (isSelf || verified) {
+                return decryptPayrollRecord(run);
+            }
+            return maskPayrollRecord(run);
+        });
+
+        res.status(200).json({ runs: formattedRuns, payslips: formattedRuns, isLocked: !verified, success: true });
     } catch (err) {
         res.status(500).json({ message: err.message, success: false });
     }
@@ -467,6 +504,12 @@ export const getPayrollSummary = async (req, res) => {
         }
 
         const runs = await PayrollRun.find(filter).lean();
+        const decryptedRuns = runs.map(r => decryptPayrollRecord(r));
+        const verified = isPayrollTokenValid(req);
+
+        const totalGross = parseFloat(decryptedRuns.reduce((s, r) => s + (Number(r.grossEarnings) || 0), 0).toFixed(2));
+        const totalDeductions = parseFloat(decryptedRuns.reduce((s, r) => s + (Number(r.totalDeductions) || 0), 0).toFixed(2));
+        const totalNet = parseFloat(decryptedRuns.reduce((s, r) => s + (Number(r.netSalary) || 0), 0).toFixed(2));
 
         const summary = {
             total: runs.length,
@@ -474,9 +517,10 @@ export const getPayrollSummary = async (req, res) => {
             approved: runs.filter(r => r.status === "approved").length,
             paid: runs.filter(r => r.status === "paid").length,
             pending: runs.filter(r => r.status !== "paid").length,
-            totalGross: parseFloat(runs.reduce((s, r) => s + r.grossEarnings, 0).toFixed(2)),
-            totalDeductions: parseFloat(runs.reduce((s, r) => s + r.totalDeductions, 0).toFixed(2)),
-            totalNet: parseFloat(runs.reduce((s, r) => s + r.netSalary, 0).toFixed(2)),
+            totalGross: verified ? totalGross : "••••••",
+            totalDeductions: verified ? totalDeductions : "••••••",
+            totalNet: verified ? totalNet : "••••••",
+            isLocked: !verified,
         };
 
         res.status(200).json({ summary, success: true });
@@ -502,19 +546,27 @@ export const addManualAdjustment = async (req, res) => {
         if (!run) return res.status(404).json({ message: "Payroll record not found", success: false });
         if (run.status !== "draft") return res.status(400).json({ message: "Only draft payroll can be manually adjusted", success: false });
 
-        run.components.push({
+        const decryptedComponents = (run.components || []).map(c => ({
+            name: c.name,
+            type: c.type,
+            amount: Number(decryptField(c.amount)) || 0
+        }));
+
+        decryptedComponents.push({
             name,
             type, // "earning" or "deduction"
             amount: numAmount
         });
 
         // Recalculate totals
-        const grossEarnings = run.components.filter(c => c.type === "earning").reduce((s, c) => s + c.amount, 0);
-        const totalDeductions = run.components.filter(c => c.type === "deduction").reduce((s, c) => s + c.amount, 0);
+        const grossEarnings = decryptedComponents.filter(c => c.type === "earning").reduce((s, c) => s + c.amount, 0);
+        const totalDeductions = decryptedComponents.filter(c => c.type === "deduction").reduce((s, c) => s + c.amount, 0);
+        const netSalary = parseFloat((grossEarnings - totalDeductions).toFixed(2));
         
-        run.grossEarnings = parseFloat(grossEarnings.toFixed(2));
-        run.totalDeductions = parseFloat(totalDeductions.toFixed(2));
-        run.netSalary = parseFloat((grossEarnings - totalDeductions).toFixed(2));
+        run.components = decryptedComponents.map(c => ({ ...c, amount: encryptField(c.amount) }));
+        run.grossEarnings = encryptField(parseFloat(grossEarnings.toFixed(2)));
+        run.totalDeductions = encryptField(parseFloat(totalDeductions.toFixed(2)));
+        run.netSalary = encryptField(netSalary);
         run.updatedBy = req.user.userId;
 
         await run.save();

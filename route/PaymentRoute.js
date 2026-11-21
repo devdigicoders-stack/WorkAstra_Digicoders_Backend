@@ -8,7 +8,8 @@ import {
     getMyPayments,
     getAllPayments,
     updatePaymentStatus,
-    getProjectFinances
+    getProjectFinances,
+    getClientFinances
 } from "../controller/PaymentController.js";
 
 const router = express.Router();
@@ -17,6 +18,9 @@ const router = express.Router();
 router.get("/upi", protect, hasPermission("SUBMIT_PAYMENT"), getUpiDetails);
 router.post("/submit", protect, hasPermission("SUBMIT_PAYMENT"), upload.single("screenshot"), submitPayment);
 router.get("/my", protect, hasPermission("SUBMIT_PAYMENT"), getMyPayments);
+
+// Client-specific finances (accessible by client themselves or admins)
+router.get("/client-finances/:clientId", protect, getClientFinances);
 
 // Admin / Manager routes
 router.post("/upi-update", protect, hasPermission("MANAGE_PAYMENTS"), updateUpiDetails);

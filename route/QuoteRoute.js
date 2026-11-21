@@ -11,6 +11,7 @@ import {
     getQuoteSendDefaults,
     addQuoteFollowUp,
     updateQuoteFollowUp,
+    getClientQuotes,
 } from "../controller/quoteController.js";
 import { protect } from "../middleware/authMiddleware.js";
 
@@ -24,6 +25,9 @@ router.get("/", protect, getAllQuotes);
 
 // Get all quotes for a specific lead
 router.get("/lead/:leadId", protect, getQuotesByLead);
+
+// Get quotes / proposal for a specific client
+router.get("/client/:clientId", protect, getClientQuotes);
 
 // Get quote as HTML (print / Save as PDF in browser)
 router.get("/:quoteId/html", protect, getQuoteHTML);

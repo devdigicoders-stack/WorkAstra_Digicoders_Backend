@@ -1,6 +1,20 @@
 import SalaryStructure from "../models/SalaryStructureSchema.js";
 import User from "../models/UserSchema.js";
 import { getSubordinateIds } from "../utills/hierarchyHelper.js";
+import jwt from "jsonwebtoken";
+import { encryptSalaryStructure, decryptSalaryStructure, maskSalaryStructure } from "../utills/cryptoHelper.js";
+
+// Verify if request includes an authenticated payroll unlock token
+const isPayrollTokenValid = (req) => {
+    const token = req.headers["x-payroll-token"];
+    if (!token) return false;
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || "Tom_and_Jerry");
+        return !!decoded?.unlocked;
+    } catch {
+        return false;
+    }
+};
 
 // Compute monthly totals from components + basic
 const computeTotals = (basic, components) => {
@@ -8,7 +22,8 @@ const computeTotals = (basic, components) => {
     let totalDeductions = 0;
 
     components.forEach(c => {
-        const amount = c.calcType === "percentage" ? parseFloat(((c.value / 100) * basic).toFixed(2)) : c.value;
+        const numVal = Number(c.value) || 0;
+        const amount = c.calcType === "percentage" ? parseFloat(((numVal / 100) * basic).toFixed(2)) : numVal;
         if (c.type === "earning") grossEarnings += amount;
         else totalDeductions += amount;
     });
@@ -34,20 +49,26 @@ export const createSalaryStructure = async (req, res) => {
         // Deactivate previous active structure for this employee
         await SalaryStructure.updateMany({ userId, isActive: true }, { $set: { isActive: false } });
 
-        const totals = computeTotals(basic, components || []);
+        const plainBasic = Number(basic);
+        const plainCtc = Number(ctc);
+        const plainComponents = (components || []).map(c => ({ ...c, value: Number(c.value) }));
+        const totals = computeTotals(plainBasic, plainComponents);
 
-        const structure = await SalaryStructure.create({
+        // Encrypt with AES-256 before saving to DB
+        const encryptedData = encryptSalaryStructure({
             userId,
             companyId: targetUser.companyId,
             effectiveFrom,
-            ctc,
-            basic,
-            components: components || [],
+            ctc: plainCtc,
+            basic: plainBasic,
+            components: plainComponents,
             ...totals,
             createdBy: req.user.userId,
         });
 
-        res.status(201).json({ structure, message: "Salary structure created", success: true });
+        const structure = await SalaryStructure.create(encryptedData);
+
+        res.status(201).json({ structure: decryptSalaryStructure(structure), message: "Salary structure created", success: true });
     } catch (err) {
         res.status(500).json({ message: err.message, success: false });
     }
@@ -60,17 +81,28 @@ export const updateSalaryStructure = async (req, res) => {
         const structure = await SalaryStructure.findById(req.params.id);
         if (!structure) return res.status(404).json({ message: "Salary structure not found", success: false });
 
-        if (effectiveFrom) structure.effectiveFrom = effectiveFrom;
-        if (ctc) structure.ctc = ctc;
-        if (basic !== undefined) structure.basic = basic;
-        if (components) structure.components = components;
+        const current = decryptSalaryStructure(structure);
+        const newEffectiveFrom = effectiveFrom !== undefined ? effectiveFrom : current.effectiveFrom;
+        const newCtc = ctc !== undefined ? Number(ctc) : current.ctc;
+        const newBasic = basic !== undefined ? Number(basic) : current.basic;
+        const newComponents = components !== undefined 
+            ? components.map(c => ({ ...c, value: Number(c.value) })) 
+            : (current.components || []);
 
-        const totals = computeTotals(structure.basic, structure.components);
+        const totals = computeTotals(newBasic, newComponents);
+
+        structure.effectiveFrom = newEffectiveFrom;
+        structure.ctc = newCtc;
+        structure.basic = newBasic;
+        structure.components = newComponents;
         Object.assign(structure, totals);
         structure.updatedBy = req.user.userId;
+
+        // Encrypt with AES-256 before saving
+        encryptSalaryStructure(structure);
         await structure.save();
 
-        res.status(200).json({ structure, message: "Salary structure updated", success: true });
+        res.status(200).json({ structure: decryptSalaryStructure(structure), message: "Salary structure updated", success: true });
     } catch (err) {
         res.status(500).json({ message: err.message, success: false });
     }
@@ -82,7 +114,11 @@ export const getUserSalaryStructures = async (req, res) => {
         const structures = await SalaryStructure.find({ userId: req.params.userId })
             .populate("userId", "firstName lastName employeeCode")
             .sort({ effectiveFrom: -1 });
-        res.status(200).json({ structures, success: true });
+
+        const unlocked = isPayrollTokenValid(req);
+        const formatted = structures.map(s => unlocked ? decryptSalaryStructure(s) : maskSalaryStructure(s));
+
+        res.status(200).json({ structures: formatted, success: true, isMasked: !unlocked });
     } catch (err) {
         res.status(500).json({ message: err.message, success: false });
     }
@@ -107,7 +143,11 @@ export const getCompanySalaryStructures = async (req, res) => {
         const structures = await SalaryStructure.find(filter)
             .populate("userId", "firstName lastName employeeCode department designation profilePic")
             .sort({ createdAt: -1 });
-        res.status(200).json({ structures, success: true });
+
+        const unlocked = isPayrollTokenValid(req);
+        const formatted = structures.map(s => unlocked ? decryptSalaryStructure(s) : maskSalaryStructure(s));
+
+        res.status(200).json({ structures: formatted, success: true, isMasked: !unlocked });
     } catch (err) {
         res.status(500).json({ message: err.message, success: false });
     }

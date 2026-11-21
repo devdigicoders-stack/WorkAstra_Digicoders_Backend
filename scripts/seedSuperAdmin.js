@@ -59,6 +59,8 @@ const seed = async () => {
     }
 
     const hashedPassword = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 10);
+    const defaultPin = process.env.SUPER_ADMIN_PAYROLL_PIN || "123456";
+    const hashedPin = await bcrypt.hash(defaultPin, 10);
     let existingUser = await User.findOne({ email: SUPER_ADMIN_EMAIL });
 
     if (existingUser) {
@@ -71,6 +73,9 @@ const seed = async () => {
       existingUser.joiningDate = existingUser.joiningDate || new Date();
       existingUser.isActive = true;
       existingUser.isDeleted = false;
+      if (!existingUser.securityPin) {
+        existingUser.securityPin = hashedPin;
+      }
       await existingUser.save();
       console.log("✅ Super Admin user updated");
     } else {
@@ -79,6 +84,7 @@ const seed = async () => {
         lastName: "Admin",
         email: SUPER_ADMIN_EMAIL,
         password: hashedPassword,
+        securityPin: hashedPin,
         role: role._id,
         companyId: null,
         employeeCode: "SUPER001",
