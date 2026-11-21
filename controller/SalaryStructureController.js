@@ -38,7 +38,7 @@ const computeTotals = (basic, components) => {
 // POST /api/payroll/salary-structure
 export const createSalaryStructure = async (req, res) => {
     try {
-        const { userId, effectiveFrom, ctc, basic, components } = req.body;
+        const { userId, effectiveFrom, ctc, basic, components, remarks } = req.body;
         if (!userId || !effectiveFrom || !ctc || !basic)
             return res.status(400).json({ message: "userId, effectiveFrom, ctc and basic are required", success: false });
 
@@ -62,6 +62,7 @@ export const createSalaryStructure = async (req, res) => {
             ctc: plainCtc,
             basic: plainBasic,
             components: plainComponents,
+            remarks: remarks || "",
             ...totals,
             createdBy: req.user.userId,
         });
@@ -77,7 +78,7 @@ export const createSalaryStructure = async (req, res) => {
 // PUT /api/payroll/salary-structure/:id
 export const updateSalaryStructure = async (req, res) => {
     try {
-        const { effectiveFrom, ctc, basic, components } = req.body;
+        const { effectiveFrom, ctc, basic, components, remarks } = req.body;
         const structure = await SalaryStructure.findById(req.params.id);
         if (!structure) return res.status(404).json({ message: "Salary structure not found", success: false });
 
@@ -95,6 +96,7 @@ export const updateSalaryStructure = async (req, res) => {
         structure.ctc = newCtc;
         structure.basic = newBasic;
         structure.components = newComponents;
+        if (remarks !== undefined) structure.remarks = remarks;
         Object.assign(structure, totals);
         structure.updatedBy = req.user.userId;
 

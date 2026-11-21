@@ -20,6 +20,7 @@ const SalaryStructureSchema = new mongoose.Schema({
     grossEarnings:  { type: mongoose.Schema.Types.Mixed, default: 0 },
     totalDeductions:{ type: mongoose.Schema.Types.Mixed, default: 0 },
     netSalary:      { type: mongoose.Schema.Types.Mixed, default: 0 },
+    remarks:        { type: String, default: "" },
     isActive:   { type: Boolean, default: true },
     createdBy:  { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     updatedBy:  { type: mongoose.Schema.Types.ObjectId, ref: "User" },
