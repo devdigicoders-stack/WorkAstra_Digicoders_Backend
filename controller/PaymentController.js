@@ -123,7 +123,10 @@ export const getMyPayments = async (req, res) => {
     try {
         const userId = req.user.userId;
         const payments = await Payment.find({ userId })
-            .populate("projectId", "name price receivedAmount status")
+            .populate("userId", "firstName lastName email phone address companyName profilePic")
+            .populate("reviewedBy", "firstName lastName")
+            .populate("companyId", "name address email phone logo")
+            .populate("projectId", "name price receivedAmount status description")
             .sort({ createdAt: -1 });
         const decryptedPayments = payments.map(p => decryptPaymentRecord(p));
         res.status(200).json({ success: true, payments: decryptedPayments });
@@ -150,9 +153,10 @@ export const getAllPayments = async (req, res) => {
         }
 
         const payments = await Payment.find(filter)
-            .populate("userId", "firstName lastName email profilePic")
+            .populate("userId", "firstName lastName email phone address companyName profilePic")
             .populate("reviewedBy", "firstName lastName")
-            .populate("projectId", "name price receivedAmount status")
+            .populate("companyId", "name address email phone logo")
+            .populate("projectId", "name price receivedAmount status description")
             .sort({ createdAt: -1 });
 
         const decryptedPayments = payments.map(p => decryptPaymentRecord(p));
@@ -381,9 +385,10 @@ export const getClientFinances = async (req, res) => {
             : { userId: clientId };
 
         const payments = await Payment.find(paymentFilter)
-            .populate("projectId", "name price status")
-            .populate("userId", "firstName lastName email profilePic")
+            .populate("projectId", "name price receivedAmount status description")
+            .populate("userId", "firstName lastName email phone address companyName profilePic")
             .populate("reviewedBy", "firstName lastName")
+            .populate("companyId", "name address email phone logo")
             .sort({ createdAt: -1 })
             .lean();
 
