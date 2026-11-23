@@ -264,17 +264,31 @@ export const generatePayroll = async (req, res) => {
 // GET /api/payroll/run?month=2025-06
 export const getPayrollRuns = async (req, res) => {
     try {
-        const { month, status, userId } = req.query;
+        const { month, status, userId, companyId } = req.query;
         const reqUser = await User.findById(req.user.userId).select("companyId role").populate("role", "name");
         const filter = {};
 
         if (reqUser.role?.name === "super_admin") {
             // Super Admin sees all payroll records
+            if (companyId) {
+                const companyUserIds = await User.find({ companyId }).distinct("_id");
+                filter.$or = [
+                    { companyId: companyId },
+                    { userId: { $in: companyUserIds } }
+                ];
+            }
         } else {
             // Hierarchy filter: Admin B1 sees only B1's team payroll
             // Admin B2's team payroll is NOT visible to Admin B1
             const allowedIds = await getSubordinateIds(req.user.userId);
-            filter.userId = { $in: allowedIds };
+            if (companyId) {
+                const companyUserIds = await User.find({ companyId }).distinct("_id");
+                const allowedSet = new Set(allowedIds.map(String));
+                const filteredCompanyIds = companyUserIds.filter(id => allowedSet.has(String(id)));
+                filter.userId = { $in: filteredCompanyIds };
+            } else {
+                filter.userId = { $in: allowedIds };
+            }
         }
 
         if (userId) {
@@ -293,12 +307,14 @@ export const getPayrollRuns = async (req, res) => {
         const runs = await PayrollRun.find(filter)
             .populate({
                 path: "userId",
-                select: "firstName lastName employeeCode profilePic joiningDate department designation address",
+                select: "firstName lastName employeeCode profilePic joiningDate department designation address companyId",
                 populate: [
                     { path: "department", select: "name" },
                     { path: "designation", select: "name" },
+                    { path: "companyId", select: "name logo" },
                 ],
             })
+            .populate("companyId", "name logo")
             .populate("approvedBy", "firstName lastName")
             .sort({ month: -1, createdAt: -1 });
 
@@ -488,7 +504,7 @@ export const deletePayrollRun = async (req, res) => {
 // GET /api/payroll/summary?month=2025-06  — aggregate stats
 export const getPayrollSummary = async (req, res) => {
     try {
-        const { month } = req.query;
+        const { month, companyId } = req.query;
         if (!month) return res.status(400).json({ message: "month is required", success: false });
 
         const reqUser = await User.findById(req.user.userId).select("companyId role").populate("role", "name");
@@ -496,11 +512,25 @@ export const getPayrollSummary = async (req, res) => {
 
         if (reqUser.role?.name === "super_admin") {
             // Super Admin: sees all payroll summary
+            if (companyId) {
+                const companyUserIds = await User.find({ companyId }).distinct("_id");
+                filter.$or = [
+                    { companyId: companyId },
+                    { userId: { $in: companyUserIds } }
+                ];
+            }
         } else {
             // Hierarchy filter: Admin B1 gets summary of only B1's team
             // Admin B2's team payroll is NOT counted in B1's summary
             const allowedIds = await getSubordinateIds(req.user.userId);
-            filter.userId = { $in: allowedIds };
+            if (companyId) {
+                const companyUserIds = await User.find({ companyId }).distinct("_id");
+                const allowedSet = new Set(allowedIds.map(String));
+                const filteredCompanyIds = companyUserIds.filter(id => allowedSet.has(String(id)));
+                filter.userId = { $in: filteredCompanyIds };
+            } else {
+                filter.userId = { $in: allowedIds };
+            }
         }
 
         const runs = await PayrollRun.find(filter).lean();
