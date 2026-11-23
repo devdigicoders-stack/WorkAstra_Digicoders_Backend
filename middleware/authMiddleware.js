@@ -8,7 +8,7 @@ export const genrateToken = (payload) => {
 
 
 
-export const protect = (req, res, next) => {
+export const protect = async (req, res, next) => {
     let token = req.cookies.token;
     
     // Fallback to Authorization header if cookie is not present
@@ -28,6 +28,21 @@ export const protect = (req, res, next) => {
         if (req.user.companyId && !req.user.company) {
             req.user.company = req.user.companyId;
         }
+
+        // Real-time session revocation check
+        if (decoded?.sessionId && decoded?.userId) {
+            const { default: User } = await import("../models/UserSchema.js");
+            const dbUser = await User.findById(decoded.userId).select("loggedDevices isActive").lean();
+            if (!dbUser || dbUser.isActive === false) {
+                return res.status(401).json({ message: "Account disabled or not found", success: false });
+            }
+            const activeSessions = Array.isArray(dbUser.loggedDevices) ? dbUser.loggedDevices : [];
+            const sessionStillActive = activeSessions.some(s => s && s.sessionId === decoded.sessionId);
+            if (!sessionStillActive) {
+                return res.status(401).json({ message: "Session expired or logged out by administrator", success: false, sessionTerminated: true });
+            }
+        }
+
         next()
     } catch (error) {
         return res.status(401).json({ message: "Not authorized, token failed", success: false })

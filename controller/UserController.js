@@ -164,10 +164,10 @@ export const loginUser = async (req, res) => {
                 isActive: true
             };
 
-            const existingSessions = (user.loggedDevices || []).filter(s => s && s.isActive);
+            const existingSessions = (user.loggedDevices || []).filter(s => s && s.isActive && s.sessionId !== currentSessionId);
             user.loggedDevices = [
                 newSession,
-                ...existingSessions.filter(s => !(s.deviceDetails === deviceDetails && s.ip === cleanIp))
+                ...existingSessions
             ].slice(0, 10);
 
             await user.save();
@@ -558,11 +558,17 @@ export const terminateDeviceSession = async (req, res) => {
         const user = await User.findById(targetUserId);
         if (!user) return res.status(404).json({ message: "User not found", success: false });
 
-        user.loggedDevices = (user.loggedDevices || []).filter(s => s.sessionId !== sessionId);
-        await user.save();
+        if (sessionId === "ALL") {
+            user.loggedDevices = [];
+        } else {
+            user.loggedDevices = (user.loggedDevices || []).filter(s => 
+                s.sessionId !== sessionId && s._id?.toString() !== sessionId
+            );
+        }
+        await user.save({ validateModifiedOnly: true });
 
         return res.status(200).json({ 
-            message: "Device session logged out successfully", 
+            message: sessionId === "ALL" ? "All device sessions logged out successfully" : "Device session logged out successfully", 
             success: true, 
             loggedDevices: user.loggedDevices 
         });
