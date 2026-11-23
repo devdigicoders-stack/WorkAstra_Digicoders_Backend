@@ -144,22 +144,34 @@ export const submitOnboardingForm = async (req, res) => {
 
 export const getPendingOnboardingRequests = async (req, res) => {
     try {
+        const { companyId } = req.query;
         const reqUser = await User.findById(req.user.userId).populate("role");
         const isSuperAdmin = reqUser?.role?.name === "super_admin";
 
         const query = {};
         if (isSuperAdmin) {
-            // Super Admin sees all onboarding requests
+            // Super Admin can filter by specific companyId
+            if (companyId && companyId !== "all") {
+                query.companyId = companyId;
+            }
         } else {
             // Hierarchy filter:
             // Admin B1 sees onboarding requests of B1's hierarchy only
             // Admin B2's employees' requests are NOT visible to Admin B1
+            const userCompany = req.user.company || reqUser?.companyId;
+            if (userCompany) query.companyId = userCompany;
             const allowedIds = await getSubordinateIds(req.user.userId);
             query.user = { $in: allowedIds };
         }
 
         const requests = await OnboardingForm.find(query)
-            .populate("user", "firstName lastName email phone dateOfBirth gender");
+            .populate({
+                path: "user",
+                select: "firstName lastName email phone dateOfBirth gender companyId",
+                populate: { path: "companyId", select: "name" }
+            })
+            .populate("companyId", "name")
+            .sort({ createdAt: -1 });
 
         res.status(200).json({ requests, success: true });
     } catch (error) {
