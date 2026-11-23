@@ -2,6 +2,7 @@ import Nda from "../models/NdaSchema.js";
 import NdaSignature from "../models/NdaSignatureSchema.js";
 import User from "../models/UserSchema.js";
 import Role from "../models/roleSchema.js";
+import Company from "../models/CompanySchema.js";
 import { createNotification } from "../utills/notificationHelper.js";
 import { uploadToCloudinary, uploadBufferToCloudinary } from "../middleware/multer.js";
 import { sendMail } from "../utills/SendEmail.js";
@@ -23,6 +24,17 @@ export const createOrUpdateNda = async (req, res) => {
         
         if (!title) {
             return res.status(400).json({ message: "Title is required", success: false });
+        }
+
+        const reqUser = await User.findById(req.user.userId).populate("role", "name");
+        const isSuperAdmin = reqUser?.role?.name === "super_admin";
+
+        // Determine target companyId
+        let targetCompanyId = null;
+        if (isSuperAdmin) {
+            targetCompanyId = companyId && companyId !== "global" && companyId !== "all" ? companyId : null;
+        } else {
+            targetCompanyId = reqUser?.companyId || null;
         }
 
         let documentUrl = "";
@@ -52,12 +64,19 @@ export const createOrUpdateNda = async (req, res) => {
 
         // If this is a Client NDA, disable all other Client NDAs
         if (targetAudience === 'Client') {
-            await Nda.updateMany({ targetAudience: 'Client' }, { $set: { status: false } });
+            const clientFilter = { targetAudience: 'Client' };
+            if (targetCompanyId) {
+                clientFilter.companyId = targetCompanyId;
+            }
+            await Nda.updateMany(clientFilter, { $set: { status: false } });
         }
 
         if (nda) {
             nda.title = title;
             if (targetAudience) nda.targetAudience = targetAudience;
+            if (isSuperAdmin) {
+                nda.companyId = targetCompanyId;
+            }
             if (req.file) {
                 nda.document = { url: documentUrl };
             }
@@ -66,7 +85,8 @@ export const createOrUpdateNda = async (req, res) => {
             
             nda.updatedBy = req.user.userId;
             await nda.save();
-            return res.status(200).json({ message: "NDA updated successfully", nda, success: true });
+            const populatedNda = await Nda.findById(nda._id).populate("companyId", "name");
+            return res.status(200).json({ message: "NDA updated successfully", nda: populatedNda, success: true });
         } else {
             if (!req.file) {
                 return res.status(400).json({ message: "Document file is required for new NDA", success: false });
@@ -74,12 +94,13 @@ export const createOrUpdateNda = async (req, res) => {
             nda = new Nda({
                 title,
                 document: { url: documentUrl },
-                companyId: companyId || null,
+                companyId: targetCompanyId,
                 targetAudience: targetAudience || "Both",
                 createdBy: req.user.userId
             });
             await nda.save();
-            return res.status(201).json({ message: "NDA created successfully", nda, success: true });
+            const populatedNda = await Nda.findById(nda._id).populate("companyId", "name");
+            return res.status(201).json({ message: "NDA created successfully", nda: populatedNda, success: true });
         }
     } catch (error) {
         console.error("NDA Create/Update Error:", error);
@@ -91,10 +112,25 @@ export const createOrUpdateNda = async (req, res) => {
 export const getAllNdas = async (req, res) => {
     try {
         const { companyId, manage } = req.query;
-        let filter = companyId ? { $or: [{ companyId }, { companyId: null }] } : { companyId: null };
-        
-        // Role-based filtering
-        const userRole = (req.user.role || "").toLowerCase();
+
+        const reqUser = await User.findById(req.user.userId).populate("role", "name");
+        const userRole = (reqUser?.role?.name || req.user.role || "").toLowerCase();
+        const isSuperAdmin = userRole === "super_admin";
+
+        let filter = {};
+        if (isSuperAdmin) {
+            if (companyId && companyId !== "all") {
+                filter = { $or: [{ companyId }, { companyId: null }] };
+            } else {
+                // Return all NDAs across all companies
+                filter = {};
+            }
+        } else {
+            const resolvedCompanyId = companyId || reqUser?.companyId;
+            filter = resolvedCompanyId
+                ? { $or: [{ companyId: resolvedCompanyId }, { companyId: null }] }
+                : { companyId: null };
+        }
         
         // If they are on the Manage page and have management rights, show all NDAs
         if (manage === "true" && (userRole === "super_admin" || userRole === "admin" || userRole === "hr")) {
@@ -103,13 +139,18 @@ export const getAllNdas = async (req, res) => {
             // If they are on the View/Sign page, filter by their actual role
             if (userRole === "intern") {
                 filter.targetAudience = { $in: ["Intern", "Both"] };
+            } else if (userRole === "client") {
+                filter.targetAudience = "Client";
             } else {
                 // Employees, HR, Admins (when signing) only see Employee NDAs
                 filter.targetAudience = { $in: ["Employee", "Both"] };
             }
         }
         
-        const ndas = await Nda.find(filter);
+        const ndas = await Nda.find(filter)
+            .populate("companyId", "name")
+            .sort({ createdAt: -1 });
+
         res.status(200).json({ ndas, success: true });
     } catch (error) {
         console.error("Get All NDAs Error:", error);
@@ -381,7 +422,12 @@ export const signNda = async (req, res) => {
 export const getNdaSignatures = async (req, res) => {
     try {
         const { ndaId } = req.params;
-        const signatures = await NdaSignature.find({ ndaId }).populate('userId', 'firstName lastName email employeeCode profilePic');
+        const signatures = await NdaSignature.find({ ndaId })
+            .populate({
+                path: 'userId',
+                select: 'firstName lastName email employeeCode profilePic companyId',
+                populate: { path: 'companyId', select: 'name' }
+            });
         res.status(200).json({ signatures, success: true });
     } catch (error) {
         console.error("Get Signatures Error:", error);
@@ -392,7 +438,12 @@ export const getNdaSignatures = async (req, res) => {
 // Get NDAs signed by current user
 export const getMySignatures = async (req, res) => {
     try {
-        const signatures = await NdaSignature.find({ userId: req.user.userId }).populate('ndaId', 'title document targetAudience');
+        const signatures = await NdaSignature.find({ userId: req.user.userId })
+            .populate({
+                path: 'ndaId',
+                select: 'title document targetAudience companyId',
+                populate: { path: 'companyId', select: 'name' }
+            });
         res.status(200).json({ signatures, success: true });
     } catch (error) {
         console.error("Get My Signatures Error:", error);
@@ -598,7 +649,11 @@ export const getClientNdaSignatures = async (req, res) => {
                 { ndaId: { $in: clientNdaIds } }
             ]
         })
-            .populate('userId', 'firstName lastName email profilePic clientNdaStatus')
+            .populate({
+                path: 'userId',
+                select: 'firstName lastName email profilePic clientNdaStatus companyId',
+                populate: { path: 'companyId', select: 'name' }
+            })
             .populate('ndaId', 'title')
             .sort({ createdAt: -1 });
             

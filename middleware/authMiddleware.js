@@ -22,6 +22,12 @@ export const protect = (req, res, next) => {
     try {
         const decoded = jwt.verify(token, EnvData.JWT_SECRET)
         req.user = decoded
+        if (req.user.company && !req.user.companyId) {
+            req.user.companyId = req.user.company;
+        }
+        if (req.user.companyId && !req.user.company) {
+            req.user.company = req.user.companyId;
+        }
         next()
     } catch (error) {
         return res.status(401).json({ message: "Not authorized, token failed", success: false })

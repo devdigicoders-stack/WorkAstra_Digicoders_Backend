@@ -2,47 +2,90 @@ import Lead from "../models/LeadSchema.js";
 import Quote from "../models/QuoteSchema.js";
 import Meeting from "../models/MeetingSchema.js";
 import User from "../models/UserSchema.js";
+import Company from "../models/CompanySchema.js";
 import mongoose from "mongoose";
 import { getSubordinateIds } from "../utills/hierarchyHelper.js";
 
-// helper
-const cid = (req) => req.user.company ? new mongoose.Types.ObjectId(req.user.company) : null;
+// Helper to reliably get company ID
+const cid = (req) => {
+    const c = req.user?.company || req.user?.companyId;
+    return c ? new mongoose.Types.ObjectId(c) : null;
+};
 
 export const getSalesReport = async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
-        const companyId = cid(req);
-        
-        let matchQuery = {};
-        
+        const { startDate, endDate, employeeId, companyId: queryCompanyId } = req.query;
         const user = await User.findById(req.user.userId).populate("role");
-        const roleName = user?.role?.name || req.user.role; // Fallback to jwt
+        const roleName = user?.role?.name || req.user.role;
 
-        if (roleName !== "super_admin") {
-            matchQuery.companyId = companyId;
+        let matchCompanyId = null;
+        if (roleName === "super_admin") {
+            if (queryCompanyId && queryCompanyId !== "all") {
+                matchCompanyId = new mongoose.Types.ObjectId(queryCompanyId);
+            }
+        } else {
+            matchCompanyId = cid(req);
         }
 
+        let baseMatch = {};
+        if (matchCompanyId) {
+            baseMatch.companyId = matchCompanyId;
+        }
+
+        // Date Range Filter
         if (startDate && endDate) {
-            matchQuery.createdAt = {
-                $gte: new Date(startDate),
-                $lte: new Date(endDate)
+            const start = new Date(startDate);
+            const end = new Date(endDate);
+            // If end date is YYYY-MM-DD without time, ensure end of day
+            if (endDate.length === 10) {
+                end.setHours(23, 59, 59, 999);
+            }
+            baseMatch.createdAt = {
+                $gte: start,
+                $lte: end
             };
         }
 
-        let leadMatchQuery = { ...matchQuery };
-        let quoteMatchQuery = { ...matchQuery };
-        let meetingMatchQuery = { ...matchQuery };
+        let leadMatchQuery = { ...baseMatch };
+        let meetingMatchQuery = { ...baseMatch };
+        let quoteMatchQuery = { ...baseMatch };
 
-        if (roleName === "admin") {
-            // Hierarchy filter
-            const allowedIds = await getSubordinateIds(req.user.userId);
-            leadMatchQuery.assignedTo = { $in: allowedIds };
-            quoteMatchQuery.createdBy = { $in: allowedIds };
-            meetingMatchQuery.assignedTo = { $in: allowedIds };
-        } else if (roleName !== "super_admin") {
-            leadMatchQuery.assignedTo = req.user.userId;
-            quoteMatchQuery.createdBy = req.user.userId;
-            meetingMatchQuery.assignedTo = req.user.userId;
+        // Employee (BDE) Specific Filter
+        if (employeeId && employeeId !== "all") {
+            const targetEmpId = new mongoose.Types.ObjectId(employeeId);
+            leadMatchQuery.assignedTo = targetEmpId;
+            meetingMatchQuery.assignedTo = targetEmpId;
+
+            // Quotes for leads assigned to this employee OR created by this employee
+            const empLeadIds = await Lead.find({ assignedTo: targetEmpId, ...(matchCompanyId ? { companyId: matchCompanyId } : {}) }).distinct("_id");
+            quoteMatchQuery.$or = [
+                { leadId: { $in: empLeadIds } },
+                { createdBy: targetEmpId }
+            ];
+        } else {
+            // Role Hierarchy based filtering
+            if (roleName === "admin") {
+                const allowedIds = await getSubordinateIds(req.user.userId);
+                const allTeamIds = [...allowedIds, new mongoose.Types.ObjectId(req.user.userId)];
+                leadMatchQuery.assignedTo = { $in: allTeamIds };
+                meetingMatchQuery.assignedTo = { $in: allTeamIds };
+
+                const teamLeadIds = await Lead.find({ assignedTo: { $in: allTeamIds }, ...(matchCompanyId ? { companyId: matchCompanyId } : {}) }).distinct("_id");
+                quoteMatchQuery.$or = [
+                    { leadId: { $in: teamLeadIds } },
+                    { createdBy: { $in: allTeamIds } }
+                ];
+            } else if (roleName !== "super_admin") {
+                const myId = new mongoose.Types.ObjectId(req.user.userId);
+                leadMatchQuery.assignedTo = myId;
+                meetingMatchQuery.assignedTo = myId;
+
+                const myLeadIds = await Lead.find({ assignedTo: myId, ...(matchCompanyId ? { companyId: matchCompanyId } : {}) }).distinct("_id");
+                quoteMatchQuery.$or = [
+                    { leadId: { $in: myLeadIds } },
+                    { createdBy: myId }
+                ];
+            }
         }
 
         // 1. Total Leads
@@ -60,14 +103,21 @@ export const getSalesReport = async (req, res) => {
             status: "Completed"
         });
 
-        // 4. Revenue (Accepted Quotes)
+        // 4. Quotes Sent & Accepted Revenue
+        const totalQuotesSent = await Quote.countDocuments({
+            ...quoteMatchQuery,
+            status: { $in: ["sent", "accepted", "rejected"] }
+        });
+
         const acceptedQuotes = await Quote.find({
             ...quoteMatchQuery,
             status: "accepted"
         });
         const totalRevenue = acceptedQuotes.reduce((sum, q) => sum + (q.grandTotal || 0), 0);
+        const conversionRate = totalLeads > 0 ? Math.round((totalConversions / totalLeads) * 100) : 0;
+        const avgDealValue = totalConversions > 0 ? Math.round(totalRevenue / totalConversions) : 0;
 
-        // BDE Performance Aggregation
+        // 5. BDE Performance Aggregation
         const leadAgg = await Lead.aggregate([
             { $match: leadMatchQuery },
             { 
@@ -89,10 +139,9 @@ export const getSalesReport = async (req, res) => {
                     as: "lead"
                 }
             },
-            { $unwind: "$lead" },
             {
                 $group: {
-                    _id: "$lead.assignedTo",
+                    _id: { $ifNull: [{ $arrayElemAt: ["$lead.assignedTo", 0] }, "$createdBy"] },
                     revenue: { $sum: "$grandTotal" }
                 }
             }
@@ -101,16 +150,15 @@ export const getSalesReport = async (req, res) => {
         const meetingAgg = await Meeting.aggregate([
             { $match: { ...meetingMatchQuery, status: "Completed" } },
             {
-                $group: {
-                    _id: "$assignedTo",
+                $group: { 
+                    _id: "$assignedTo", 
                     meetingsDone: { $sum: 1 }
-                }
+                } 
             }
         ]);
 
         // Merge performance data
         const performanceMap = {};
-        
         const ensureBDE = (id) => {
             if (!id) return;
             const key = id.toString();
@@ -142,14 +190,110 @@ export const getSalesReport = async (req, res) => {
         });
 
         const userIds = Object.keys(performanceMap);
-        const users = await User.find({ _id: { $in: userIds } }).select("firstName lastName profilePic");
+        const users = await User.find({ _id: { $in: userIds } }).select("firstName lastName email profilePic");
         
         const bdePerformance = users.map(u => ({
             userId: u._id,
             name: `${u.firstName} ${u.lastName}`,
+            email: u.email,
             profilePic: u.profilePic?.url || null,
             ...performanceMap[u._id.toString()]
         })).sort((a, b) => b.revenue - a.revenue);
+
+        // 6. Lead Status Breakdown (Funnel distribution)
+        const leadStatusAgg = await Lead.aggregate([
+            { $match: leadMatchQuery },
+            {
+                $group: {
+                    _id: "$status",
+                    count: { $sum: 1 }
+                }
+            }
+        ]);
+        const leadStatusBreakdown = leadStatusAgg.map(s => ({
+            name: s._id || "Unknown",
+            value: s.count
+        }));
+
+        // 7. Monthly Trend Aggregation
+        const monthlyLeads = await Lead.aggregate([
+            { $match: leadMatchQuery },
+            {
+                $group: {
+                    _id: {
+                        year: { $year: "$createdAt" },
+                        month: { $month: "$createdAt" }
+                    },
+                    leads: { $sum: 1 },
+                    conversions: { $sum: { $cond: [{ $eq: ["$status", "Project Done"] }, 1, 0] } }
+                }
+            },
+            { $sort: { "_id.year": 1, "_id.month": 1 } }
+        ]);
+
+        const monthlyQuotes = await Quote.aggregate([
+            { $match: { ...quoteMatchQuery, status: "accepted" } },
+            {
+                $group: {
+                    _id: {
+                        year: { $year: "$createdAt" },
+                        month: { $month: "$createdAt" }
+                    },
+                    revenue: { $sum: "$grandTotal" }
+                }
+            },
+            { $sort: { "_id.year": 1, "_id.month": 1 } }
+        ]);
+
+        const monthNames = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        const trendMap = {};
+
+        monthlyLeads.forEach(item => {
+            const y = item._id.year;
+            const m = item._id.month;
+            const key = `${y}-${String(m).padStart(2, '0')}`;
+            trendMap[key] = {
+                key,
+                month: `${monthNames[m]} ${y}`,
+                leads: item.leads,
+                conversions: item.conversions,
+                revenue: 0
+            };
+        });
+
+        monthlyQuotes.forEach(item => {
+            const y = item._id.year;
+            const m = item._id.month;
+            const key = `${y}-${String(m).padStart(2, '0')}`;
+            if (!trendMap[key]) {
+                trendMap[key] = {
+                    key,
+                    month: `${monthNames[m]} ${y}`,
+                    leads: 0,
+                    conversions: 0,
+                    revenue: 0
+                };
+            }
+            trendMap[key].revenue = item.revenue;
+        });
+
+        const monthlyTrend = Object.values(trendMap).sort((a, b) => a.key.localeCompare(b.key));
+
+        // 8. Employees list for frontend filter dropdown
+        let empQuery = { isActive: true };
+        if (matchCompanyId) {
+            empQuery.companyId = matchCompanyId;
+        }
+        if (roleName === "admin") {
+            const allowedIds = await getSubordinateIds(req.user.userId);
+            empQuery._id = { $in: [...allowedIds, req.user.userId] };
+        } else if (roleName !== "super_admin") {
+            empQuery._id = req.user.userId;
+        }
+
+        const employees = await User.find(empQuery)
+            .select("firstName lastName email")
+            .sort({ firstName: 1 });
 
         res.json({
             success: true,
@@ -157,9 +301,19 @@ export const getSalesReport = async (req, res) => {
                 totalLeads,
                 totalConversions,
                 totalMeetings,
-                totalRevenue
+                totalQuotesSent,
+                totalRevenue,
+                conversionRate,
+                avgDealValue
             },
-            bdePerformance
+            bdePerformance,
+            leadStatusBreakdown,
+            monthlyTrend,
+            employees: employees.map(e => ({
+                _id: e._id,
+                name: `${e.firstName} ${e.lastName}`,
+                email: e.email
+            }))
         });
 
     } catch (error) {

@@ -6,7 +6,6 @@ const assetTypeSchema = new mongoose.Schema(
             type: String,
             required: [true, "Asset type name is required"],
             trim: true,
-            unique: true
         },
         description: {
             type: String,
@@ -26,6 +25,9 @@ const assetTypeSchema = new mongoose.Schema(
     { timestamps: true }
 );
 
-const AssetType = mongoose.model("AssetType", assetTypeSchema);
+// Compound index so asset type name is unique per company (or null for global)
+assetTypeSchema.index({ name: 1, companyId: 1 }, { unique: true });
+
+const AssetType = mongoose.models.AssetType || mongoose.model("AssetType", assetTypeSchema);
 
 export default AssetType;

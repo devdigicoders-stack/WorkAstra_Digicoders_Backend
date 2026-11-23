@@ -11,8 +11,19 @@ export const createOrUpdatePolicy = async (req, res) => {
             return res.status(400).json({ message: "Title and content are required", success: false });
         }
 
-        // Find existing policy by title and companyId
-        let policy = await Policy.findOne({ title, companyId: companyId || null });
+        const reqUser = await User.findById(req.user.userId).populate("role", "name");
+        const isSuperAdmin = reqUser?.role?.name === "super_admin";
+
+        // Determine target companyId
+        let targetCompanyId = null;
+        if (isSuperAdmin) {
+            targetCompanyId = companyId && companyId !== "global" ? companyId : null;
+        } else {
+            targetCompanyId = reqUser?.companyId || null;
+        }
+
+        // Find existing policy by title and targetCompanyId
+        let policy = await Policy.findOne({ title, companyId: targetCompanyId });
 
         if (policy) {
             policy.content = content;
@@ -33,12 +44,13 @@ export const createOrUpdatePolicy = async (req, res) => {
                 });
             }
 
-            return res.status(200).json({ message: "Policy updated successfully", policy, success: true });
+            const populatedPolicy = await Policy.findById(policy._id).populate("companyId", "name");
+            return res.status(200).json({ message: "Policy updated successfully", policy: populatedPolicy, success: true });
         } else {
             policy = new Policy({
                 title,
                 content,
-                companyId: companyId || null,
+                companyId: targetCompanyId,
                 createdBy: req.user.userId
             });
             await policy.save();
@@ -57,7 +69,8 @@ export const createOrUpdatePolicy = async (req, res) => {
                 });
             }
 
-            return res.status(201).json({ message: "Policy created successfully", policy, success: true });
+            const populatedPolicy = await Policy.findById(policy._id).populate("companyId", "name");
+            return res.status(201).json({ message: "Policy created successfully", policy: populatedPolicy, success: true });
         }
     } catch (error) {
         console.error("Policy Create/Update Error:", error);
@@ -74,11 +87,11 @@ export const getPolicyByTitle = async (req, res) => {
         // Try to find company specific first, if not fallback to global
         let policy;
         if (companyId) {
-            policy = await Policy.findOne({ title, companyId });
+            policy = await Policy.findOne({ title, companyId }).populate("companyId", "name");
         }
         
         if (!policy) {
-            policy = await Policy.findOne({ title, companyId: null });
+            policy = await Policy.findOne({ title, companyId: null }).populate("companyId", "name");
         }
 
         if (!policy) {
@@ -96,8 +109,30 @@ export const getPolicyByTitle = async (req, res) => {
 export const getAllPolicies = async (req, res) => {
     try {
         const { companyId } = req.query;
-        const filter = companyId ? { $or: [{ companyId }, { companyId: null }] } : { companyId: null };
-        const policies = await Policy.find(filter);
+        const reqUser = await User.findById(req.user.userId).populate("role", "name");
+        const isSuperAdmin = reqUser?.role?.name === "super_admin";
+
+        let filter = {};
+        if (isSuperAdmin) {
+            if (companyId && companyId !== "all") {
+                filter = { $or: [{ companyId }, { companyId: null }] };
+            } else {
+                // Return all policies across all companies
+                filter = {};
+            }
+        } else {
+            const resolvedCompanyId = companyId || reqUser?.companyId;
+            filter = resolvedCompanyId
+                ? { $or: [{ companyId: resolvedCompanyId }, { companyId: null }] }
+                : { companyId: null };
+        }
+
+        const policies = await Policy.find(filter)
+            .populate("companyId", "name")
+            .populate("createdBy", "firstName lastName")
+            .populate("updatedBy", "firstName lastName")
+            .sort({ updatedAt: -1 });
+
         res.status(200).json({ policies, success: true });
     } catch (error) {
         console.error("Get All Policies Error:", error);

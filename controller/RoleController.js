@@ -1,5 +1,6 @@
 import Role from "../models/roleSchema.js";
 import User from "../models/UserSchema.js";
+import Company from "../models/CompanySchema.js";
 import { createNotification } from "../utills/notificationHelper.js";
 import { stripSuperAdminOnlyPermissions } from "../config/superAdminOnly.js";
 export const createRole = async (req, res) => {
@@ -86,7 +87,16 @@ export const getRoles = async (req, res) => {
 
 export const getAllRoles = async (req, res) => {
     try {
-        const roles = await Role.find({ isdeleted: false }).populate("companyId").populate("createdBy", "firstName lastName").populate("updatedBy", "firstName lastName");
+        const { companyId } = req.query;
+        let filter = { isdeleted: false };
+        if (companyId && companyId !== "all") {
+            filter.companyId = companyId;
+        }
+        const roles = await Role.find(filter)
+            .populate("companyId", "name")
+            .populate("createdBy", "firstName lastName")
+            .populate("updatedBy", "firstName lastName")
+            .sort({ createdAt: -1 });
         res.status(200).json({ message: "Roles retrieved successfully", success: true, data: roles });
     } catch (error) {
         res.status(400).json({ message: error.message, success: false });
@@ -96,7 +106,7 @@ export const getAllRoles = async (req, res) => {
 export const getAllCompanyRoles = async (req, res) => {
     try {
         const userId = req.user.userId; // Correctly extract userId
-        const userData = await User.findById(userId);
+        const userData = await User.findById(userId).populate("role", "name");
 
         if (!userData) {
             return res.status(404).json({ 
@@ -105,8 +115,23 @@ export const getAllCompanyRoles = async (req, res) => {
             });
         }
 
-        const companyId = userData.companyId;
-        const roles = await Role.find({ companyId, isdeleted: false }).populate("companyId").populate("createdBy", "firstName lastName").populate("updatedBy", "firstName lastName");
+        const isSuperAdmin = (userData.role?.name || req.user.role || "").toLowerCase() === "super_admin";
+        const { companyId: queryCompanyId } = req.query;
+
+        let filter = { isdeleted: false };
+        if (isSuperAdmin) {
+            if (queryCompanyId && queryCompanyId !== "all") {
+                filter.companyId = queryCompanyId;
+            }
+        } else {
+            filter.companyId = userData.companyId;
+        }
+
+        const roles = await Role.find(filter)
+            .populate("companyId", "name")
+            .populate("createdBy", "firstName lastName")
+            .populate("updatedBy", "firstName lastName")
+            .sort({ createdAt: -1 });
 
         res.status(200).json({
             message: "Roles retrieved successfully",

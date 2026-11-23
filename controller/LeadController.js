@@ -8,22 +8,29 @@ import { encryptField } from "../utills/cryptoHelper.js";
 // companyId comes from JWT — no extra DB call needed
 const cid = (req) => req.user.company;
 
-// ── GET /api/leads?search=&status=&assignedTo=&page=1&limit=20 ────────────────
+// ── GET /api/leads?search=&status=&assignedTo=&companyId=&page=1&limit=20 ───
 export const getLeads = async (req, res) => {
     try {
-        const { search, status, assignedTo, page = 1, limit = 20 } = req.query;
+        const { search, status, assignedTo, companyId: queryCompanyId, page = 1, limit = 20 } = req.query;
         const skip = (Number(page) - 1) * Number(limit);
         const lim  = Math.min(Number(limit), 100);
 
         const filter = {};
         const companyId = cid(req);
-        const isAdmin = req.user.role === "super_admin" || req.user.role === "admin";
+        const isSuperAdmin = req.user.role === "super_admin";
+        const isAdmin = isSuperAdmin || req.user.role === "admin";
 
-        if (req.user.role === "super_admin") {
-            // Super Admin sees all company leads
-            filter.companyId = companyId;
+        if (isSuperAdmin) {
+            if (queryCompanyId && queryCompanyId !== "all") {
+                filter.companyId = queryCompanyId;
+            } else if (queryCompanyId === "all") {
+                // All companies — no filter.companyId applied
+            } else if (companyId) {
+                filter.companyId = companyId;
+            }
             if (assignedTo) filter.assignedTo = assignedTo;
         } else if (req.user.role === "admin") {
+            if (companyId) filter.companyId = companyId;
             // Hierarchy filter: Admin sees only leads assigned to self & subordinates
             const allowedIds = await getSubordinateIds(req.user.userId);
             filter.assignedTo = { $in: allowedIds };
@@ -31,6 +38,7 @@ export const getLeads = async (req, res) => {
             // If specific user is requested, override (assuming UI restricts choice to subordinates)
             if (assignedTo) filter.assignedTo = assignedTo;
         } else {
+            if (companyId) filter.companyId = companyId;
             // Employee sees only their own leads
             filter.assignedTo = req.user.userId;
         }
@@ -48,9 +56,10 @@ export const getLeads = async (req, res) => {
         const [leads, total] = await Promise.all([
             Lead.find(filter, {
                 contactNumber: 1, orgName: 1, contactPerson: 1,
-                status: 1, assignedTo: 1, createdAt: 1,
+                status: 1, assignedTo: 1, createdAt: 1, dealPrice: 1, companyId: 1
             })
                 .populate("assignedTo", "firstName lastName")
+                .populate("companyId", "name")
                 .sort({ createdAt: -1 })
                 .skip(skip)
                 .limit(lim)
@@ -80,6 +89,7 @@ export const getLeadById = async (req, res) => {
         }
 
         const lead = await Lead.findOne(filter)
+            .populate("companyId", "name")
             .populate("assignedTo", "firstName lastName employeeCode profilePic")
             .populate("createdBy",  "firstName lastName")
             .populate("updatedBy",  "firstName lastName")
@@ -98,19 +108,25 @@ export const getLeadById = async (req, res) => {
 export const createLead = async (req, res) => {
     try {
         const { contactNumber, orgName, address, contactPerson,
-                email, status, assignedTo, customFields } = req.body;
+                email, status, assignedTo, customFields, dealPrice, companyId: bodyCompanyId } = req.body;
 
         if (!contactNumber?.trim() || !orgName?.trim())
             return res.status(400).json({ message: "contactNumber and orgName are required", success: false });
 
+        let targetCompanyId = cid(req);
+        if (req.user.role === "super_admin" && bodyCompanyId) {
+            targetCompanyId = bodyCompanyId;
+        }
+
         const lead = await Lead.create({
-            companyId:     cid(req),
+            companyId:     targetCompanyId,
             contactNumber: contactNumber.trim(),
             orgName:       orgName.trim(),
             address, contactPerson,
             email:         email?.toLowerCase?.() || email,
             customFields:  customFields || {},
             status:        status || "New Lead",
+            dealPrice:     dealPrice ? Number(dealPrice) : 0,
             assignedTo:    assignedTo || null,
             createdBy:     req.user.userId,
         });
@@ -150,7 +166,14 @@ export const updateLead = async (req, res) => {
             });
         }
 
-        const current = await Lead.findOne({ _id: req.params.id, companyId: { $in: [cid(req), null] } }).lean();
+        if (req.user.role === "super_admin" && req.body.companyId) {
+            $set.companyId = req.body.companyId;
+        }
+
+        const current = await Lead.findOne({
+            _id: req.params.id,
+            ...(req.user.role === "super_admin" ? {} : { companyId: { $in: [cid(req), null] } })
+        }).lean();
         if (!current) return res.status(404).json({ message: "Lead not found", success: false });
 
         const resolveUser = async (id) => {
