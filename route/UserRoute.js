@@ -1,5 +1,5 @@
 import express from "express";
-import { registerUser, loginUser, forgotPassword, resetPassword, adminChangePassword, getAllUsers, getAllUsersByCompany, verifyToken, getUserProfile, updateUserProfile, adminUpdateUser, toggleUserStatus, logoutUser, changePassword, deleteUser, saveFcmToken, getUpcomingEvents, getAllClients, getGreetingCardUrl, submitBankDetails, getMyBankDetails, approveBankDetails, rejectBankDetails, adminEditBankDetails, registerFace, verifySecurityPin, forgotPayrollPin, resetPayrollPin } from "../controller/UserController.js";
+import { registerUser, loginUser, forgotPassword, resetPassword, adminChangePassword, getAllUsers, getAllUsersByCompany, verifyToken, getUserProfile, updateUserProfile, adminUpdateUser, toggleUserStatus, logoutUser, changePassword, deleteUser, saveFcmToken, getUpcomingEvents, getAllClients, getGreetingCardUrl, submitBankDetails, getMyBankDetails, approveBankDetails, rejectBankDetails, adminEditBankDetails, registerFace, verifySecurityPin, forgotPayrollPin, resetPayrollPin, terminateDeviceSession } from "../controller/UserController.js";
 import upload from "../middleware/multer.js";
 import { protect, hasPermission } from "../middleware/authMiddleware.js";
 
@@ -11,6 +11,7 @@ router.post("/login", loginUser);
 router.post("/forgot-password", forgotPassword);
 router.post("/reset-password", resetPassword);
 router.get("/logout", logoutUser);
+router.post("/terminate-session", protect, terminateDeviceSession);
 router.get("/profile", protect, getUserProfile);
 router.put("/profile", protect, upload.single("profilePic"), updateUserProfile);
 router.post("/register-face", protect, registerFace);

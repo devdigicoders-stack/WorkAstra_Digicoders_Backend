@@ -148,6 +148,27 @@ const UserSchema = new mongoose.Schema({
         year: { type: Number }, // e.g. 2026
         awardedAt: { type: Date, default: Date.now }
     }],
+    lastLoginDevice: {
+        type: String, // "Mobile" | "Laptop" | "Tablet"
+        default: null
+    },
+    lastLoginDeviceDetails: {
+        type: String, // e.g. "Windows (Chrome)"
+        default: null
+    },
+    lastLoginAt: {
+        type: Date,
+        default: null
+    },
+    loggedDevices: [{
+        sessionId: { type: String, required: true },
+        deviceType: { type: String, enum: ["Mobile", "Laptop", "Tablet"], default: "Laptop" },
+        deviceDetails: { type: String, default: null }, // e.g. "Windows (Chrome)"
+        ip: { type: String, default: null },
+        loginAt: { type: Date, default: Date.now },
+        lastActiveAt: { type: Date, default: Date.now },
+        isActive: { type: Boolean, default: true }
+    }],
 
     // Bank & UPI Details
     bankDetails: {

@@ -5,6 +5,7 @@ import Role from "../models/roleSchema.js";
 import Branch from "../models/BranchSchema.js";
 import { createNotification } from "../utills/notificationHelper.js";
 import { getSubordinateIds } from "../utills/hierarchyHelper.js";
+import { parseDeviceType } from "../utills/deviceHelper.js";
 // hhhhh
 const notifyAdmins = async (companyId, title, message) => {
     try {
@@ -143,6 +144,10 @@ export const checkIn = async (req, res) => {
         const shift = user.workShift ? await WorkShift.findById(user.workShift) : null;
         const now = new Date(); // UTC — stored in DB as UTC, displayed correctly via toLocaleTimeString
 
+        // Detect device (Mobile vs Laptop/Tablet)
+        const ua = req.headers["user-agent"] || "";
+        const { deviceType, deviceDetails } = parseDeviceType(ua);
+
         const employeeName = `${user.firstName || ""} ${user.lastName || ""}`.trim() || "Employee";
 
         if (existing) {
@@ -154,10 +159,17 @@ export const checkIn = async (req, res) => {
             // Ensure punches array exists
             if (!Array.isArray(existing.punches)) existing.punches = [];
 
-            // Add new punch
-            existing.punches.push({ checkIn: now, checkInLocation: { latitude, longitude, address } });
+            // Add new punch with device info
+            existing.punches.push({
+                checkIn: now,
+                checkInLocation: { latitude, longitude, address },
+                deviceType,
+                deviceDetails
+            });
             existing.checkIn = existing.punches[0].checkIn; // keep first check-in as primary
             existing.checkOut = null; // open again
+            existing.deviceType = deviceType;
+            existing.deviceDetails = deviceDetails;
             if (!existing.createdBy) existing.createdBy = userId;
             await existing.save();
 
@@ -179,7 +191,14 @@ export const checkIn = async (req, res) => {
             date,
             checkIn: now,
             checkInLocation: { latitude, longitude, address },
-            punches: [{ checkIn: now, checkInLocation: { latitude, longitude, address } }],
+            deviceType,
+            deviceDetails,
+            punches: [{
+                checkIn: now,
+                checkInLocation: { latitude, longitude, address },
+                deviceType,
+                deviceDetails
+            }],
             status,
             createdBy: userId,
         });

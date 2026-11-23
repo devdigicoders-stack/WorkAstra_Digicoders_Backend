@@ -12,6 +12,8 @@ const punchSchema = new mongoose.Schema({
     checkInLocation: { type: locationSchema },
     checkOutLocation: { type: locationSchema },
     workHours: { type: Number, default: 0 },
+    deviceType: { type: String, default: "Laptop" }, // "Mobile" | "Laptop" | "Tablet"
+    deviceDetails: { type: String, default: "" }, // e.g. "Windows (Chrome)"
 }, { _id: false });
 
 const AttendanceSchema = new mongoose.Schema({
@@ -24,6 +26,8 @@ const AttendanceSchema = new mongoose.Schema({
     checkOut: { type: Date },
     checkInLocation: { type: locationSchema },
     checkOutLocation: { type: locationSchema },
+    deviceType: { type: String, default: "Laptop" }, // "Mobile" | "Laptop" | "Tablet"
+    deviceDetails: { type: String, default: "" }, // e.g. "Windows (Chrome)"
     // Multiple punches support
     punches: { type: [punchSchema], default: [] },
     workHours: { type: Number, default: 0 },

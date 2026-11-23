@@ -13,6 +13,7 @@ import EnvData from "../config/EnvData.js";
 import { createNotification } from "../utills/notificationHelper.js";
 import { uploadToCloudinary } from "../middleware/multer.js";
 import { getSubordinateIds } from "../utills/hierarchyHelper.js";
+import { parseDeviceType } from "../utills/deviceHelper.js";
 
 const normalizeDate = (date) => {
     if (!date) return null;
@@ -140,7 +141,47 @@ export const loginUser = async (req, res) => {
             const company = await Company.findById(user.companyId._id).select("status");
             if (!company || !company.status) return res.status(403).json({ message: "Your company account has been deactivated. Please contact support.", success: false, blocked: true });
         }
-        const token = genrateToken({ userId: user._id, role: user.role.name, company: user?.companyId?._id, permissions: user.role.permissions || [] });
+
+        // Track Login Device & Multi-Device Active Sessions
+        let currentSessionId = "sess_" + Date.now() + "_" + Math.random().toString(36).substring(2, 8);
+        try {
+            const ua = req.headers["user-agent"] || "";
+            const rawIp = req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.socket?.remoteAddress || req.ip || "";
+            const cleanIp = rawIp.replace("::ffff:", "").replace("::1", "127.0.0.1") || "127.0.0.1";
+            const { deviceType, deviceDetails } = parseDeviceType(ua);
+
+            user.lastLoginDevice = deviceType;
+            user.lastLoginDeviceDetails = deviceDetails;
+            user.lastLoginAt = new Date();
+
+            const newSession = {
+                sessionId: currentSessionId,
+                deviceType,
+                deviceDetails,
+                ip: cleanIp,
+                loginAt: new Date(),
+                lastActiveAt: new Date(),
+                isActive: true
+            };
+
+            const existingSessions = (user.loggedDevices || []).filter(s => s && s.isActive);
+            user.loggedDevices = [
+                newSession,
+                ...existingSessions.filter(s => !(s.deviceDetails === deviceDetails && s.ip === cleanIp))
+            ].slice(0, 10);
+
+            await user.save();
+        } catch (deviceErr) {
+            console.error("Error saving login device info:", deviceErr);
+        }
+
+        const token = genrateToken({ 
+            userId: user._id, 
+            role: user.role.name, 
+            company: user?.companyId?._id, 
+            permissions: user.role.permissions || [],
+            sessionId: currentSessionId
+        });
         user.password = undefined;
         const isProd = EnvData.NODE_ENV === "production";
         res.cookie("token", token, {
@@ -482,11 +523,52 @@ export const changePassword = async (req, res) => {
 
 export const logoutUser = async (req, res) => {
     try {
+        const token = req.cookies.token || (req.headers.authorization && req.headers.authorization.startsWith("Bearer") ? req.headers.authorization.split(" ")[1] : null);
+        if (token) {
+            try {
+                const decoded = jwt.verify(token, EnvData.JWT_SECRET);
+                if (decoded?.userId && decoded?.sessionId) {
+                    await User.findByIdAndUpdate(decoded.userId, {
+                        $pull: { loggedDevices: { sessionId: decoded.sessionId } }
+                    });
+                }
+            } catch (tokenErr) {
+                // Ignore token error on logout
+            }
+        }
         const isProd = EnvData.NODE_ENV === "production";
         res.clearCookie("token", { httpOnly: true, secure: isProd, sameSite: isProd ? "none" : "lax" });
         return res.status(200).json({ message: "Logged out successfully", success: true });
     } catch (error) {
         res.status(500).json({ message: "Error logging out", success: false });
+    }
+};
+
+// Terminate a specific device session (Self or Admin)
+export const terminateDeviceSession = async (req, res) => {
+    try {
+        const { userId, sessionId } = req.body;
+        const targetUserId = userId || req.user.userId;
+
+        // Check permission: user can terminate own session, admin/super_admin can terminate any user's session
+        if (targetUserId.toString() !== req.user.userId.toString() && req.user.role !== "admin" && req.user.role !== "super_admin") {
+            return res.status(403).json({ message: "Not authorized to terminate this session", success: false });
+        }
+
+        const user = await User.findById(targetUserId);
+        if (!user) return res.status(404).json({ message: "User not found", success: false });
+
+        user.loggedDevices = (user.loggedDevices || []).filter(s => s.sessionId !== sessionId);
+        await user.save();
+
+        return res.status(200).json({ 
+            message: "Device session logged out successfully", 
+            success: true, 
+            loggedDevices: user.loggedDevices 
+        });
+    } catch (error) {
+        console.error("Terminate session error:", error);
+        return res.status(500).json({ message: "Error terminating device session", success: false });
     }
 };
 
