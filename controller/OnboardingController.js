@@ -10,7 +10,6 @@ import { getSubordinateIds } from "../utills/hierarchyHelper.js";
 import { createNotification } from "../utills/notificationHelper.js";
 import { sendMail } from "../utills/SendEmail.js";
 import { generateOfferPdfBuffer } from "../utills/offerPdfGenerator.js";
-import puppeteer from "puppeteer";
 import { encryptSalaryStructure, decryptSalaryStructure } from "../utills/cryptoHelper.js";
 
 // Helper to convert logo to Base64 data URI so Puppeteer renders it instantly without network/SSL errors
