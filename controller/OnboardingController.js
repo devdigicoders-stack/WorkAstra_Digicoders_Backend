@@ -1,3 +1,6 @@
+import fs from "fs";
+import path from "path";
+import axios from "axios";
 import OnboardingForm from "../models/OnboardingFormSchema.js";
 import User from "../models/UserSchema.js";
 import SalaryStructure from "../models/SalaryStructureSchema.js";
@@ -9,6 +12,53 @@ import { sendMail } from "../utills/SendEmail.js";
 import { generateOfferPdfBuffer } from "../utills/offerPdfGenerator.js";
 import puppeteer from "puppeteer";
 import { encryptSalaryStructure, decryptSalaryStructure } from "../utills/cryptoHelper.js";
+
+// Helper to convert logo to Base64 data URI so Puppeteer renders it instantly without network/SSL errors
+const getLogoDataUri = async (logoUrl, req) => {
+    if (!logoUrl) return "";
+    if (logoUrl.startsWith("data:")) return logoUrl;
+
+    if (logoUrl.startsWith("/")) {
+        try {
+            const relPath = logoUrl.replace(/^\//, "");
+            const candidatePaths = [
+                path.join(process.cwd(), relPath),
+                path.join(process.cwd(), "uploads", path.basename(relPath)),
+                path.resolve("uploads", path.basename(relPath)),
+                path.resolve(relPath)
+            ];
+            for (const p of candidatePaths) {
+                if (fs.existsSync(p)) {
+                    const ext = path.extname(p).toLowerCase().replace(".", "") || "png";
+                    const mime = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : ext === "svg" ? "image/svg+xml" : "image/png";
+                    const base64 = fs.readFileSync(p).toString("base64");
+                    return `data:${mime};base64,${base64}`;
+                }
+            }
+        } catch (e) {
+            console.warn("Could not read logo from disk as base64:", e.message);
+        }
+
+        const isLocalHost = req.get("host").includes("localhost") || /^\d+\.\d+\.\d+\.\d+/.test(req.get("host"));
+        const protocol = isLocalHost ? "http" : (req.secure || req.headers["x-forwarded-proto"] === "https" ? "https" : "http");
+        return `${protocol}://${req.get("host")}${logoUrl}`;
+    }
+
+    if (logoUrl.startsWith("http")) {
+        try {
+            const resp = await axios.get(logoUrl, { responseType: "arraybuffer", timeout: 4000 });
+            if (resp.data) {
+                const contentType = resp.headers["content-type"] || "image/png";
+                const base64 = Buffer.from(resp.data).toString("base64");
+                return `data:${contentType};base64,${base64}`;
+            }
+        } catch (_) {
+            // Keep original URL if fetch fails
+        }
+    }
+
+    return logoUrl;
+};
 
 // Helper to handle optional file uploads
 const handleFileUpload = async (files, fieldName, folder) => {
@@ -249,11 +299,7 @@ export const approveOnboarding = async (req, res) => {
         const joinDate = new Date(user.dateOfJoining || Date.now()).toLocaleDateString('en-US', dateOptions);
         const roleName = user.designation?.name || user.role?.name || 'Developer';
         const companyName = company?.name || 'DigiCoders';
-        let logoUrl = company?.icon?.url || '';
-        if (logoUrl && logoUrl.startsWith('/')) {
-            const protocol = req.protocol === 'http' && req.get('host').includes('localhost') ? 'http' : 'https';
-            logoUrl = `${protocol}://${req.get('host')}${logoUrl}`;
-        }
+        let logoUrl = await getLogoDataUri(company?.icon?.url || '', req);
 
         const pdfHtml = `
             <!DOCTYPE html>
@@ -459,13 +505,8 @@ export const downloadOfferLetterPdf = async (req, res) => {
         const today = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
         const joinDate = new Date(salary.createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
         const currentYear = new Date().getFullYear();
-        let logoUrl = company?.icon?.url || '';
-        
-        // Ensure logoUrl is absolute for Puppeteer to render
-        if (logoUrl && logoUrl.startsWith('/')) {
-            const protocol = req.protocol === 'http' && req.get('host').includes('localhost') ? 'http' : 'https';
-            logoUrl = `${protocol}://${req.get('host')}${logoUrl}`;
-        }
+        // Ensure logoUrl is base64 Data URI or safe absolute URL so Puppeteer renders cleanly on any device/host
+        let logoUrl = await getLogoDataUri(company?.icon?.url || '', req);
 
         const htmlContent = `
             <!DOCTYPE html>
