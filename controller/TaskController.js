@@ -552,3 +552,47 @@ export const getMyTaskHistory = async (req, res) => {
         res.status(500).json({ success: false, message: err.message });
     }
 };
+
+export const getPendingTasks = async (req, res) => {
+    try {
+        const userId = req.user.userId;
+        const isSuperAdmin = req.user.role === "super_admin";
+        const hasTaskPerm = (req.user.permissions || []).some(p =>
+            ["VIEW_ALL_TASKS", "CREATE_TASK"].includes(p)
+        );
+
+        let projectFilter = { isDeleted: false };
+        if (!isSuperAdmin) {
+            const allowedIds = await getSubordinateIds(userId);
+            projectFilter.$or = [
+                { createdBy: { $in: allowedIds } },
+                { members: { $in: allowedIds } },
+                { members: userId },
+                { createdBy: userId }
+            ];
+        }
+        const userProjects = await Project.find(projectFilter).select("_id");
+        const userProjectIds = userProjects.map(p => p._id);
+
+        const filter = {
+            project: { $in: userProjectIds },
+            status: { $nin: ["done", "completed"] },
+            isDeleted: false
+        };
+
+        if (!isSuperAdmin && !hasTaskPerm) {
+            filter.$or = [{ assignedTo: userId }, { qaAssignedTo: userId }];
+        }
+
+        const tasks = await Task.find(filter)
+            .populate("project", "name")
+            .populate("assignedTo", "firstName lastName profilePic")
+            .populate("createdBy", "firstName lastName")
+            .sort({ updatedAt: -1, createdAt: -1 })
+            .limit(20);
+
+        res.json({ success: true, data: tasks });
+    } catch (err) {
+        res.status(500).json({ success: false, message: err.message });
+    }
+};

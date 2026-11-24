@@ -234,6 +234,32 @@ export const getPerformanceReport = async (req, res) => {
             let penalty = attendancePenalty + taskPenalty;
             score = Math.max(0, score - penalty);
             dev.performanceScore = Math.round(score);
+
+            // Calculate per-developer average completion time for completed tasks
+            const devCompleted = (dev.tasks || []).filter(t => t.status === "done");
+            if (devCompleted.length > 0) {
+                const devTotalMs = devCompleted.reduce((s, t) => s + Math.max(0, new Date(t.updatedAt).getTime() - new Date(t.createdAt).getTime()), 0);
+                const devAvgMs = devTotalMs / devCompleted.length;
+                const devAvgMins = Math.round(devAvgMs / 60000);
+                const devAvgHrs = Math.round((devAvgMs / 3600000) * 10) / 10;
+                dev.avgCompletionHours = devAvgHrs;
+                dev.avgCompletionMinutes = devAvgMins;
+                if (devAvgMs < 60000) {
+                    dev.avgCompletionFormatted = "< 1 min";
+                } else if (devAvgMins < 60) {
+                    dev.avgCompletionFormatted = `${devAvgMins} min${devAvgMins > 1 ? "s" : ""}`;
+                } else if (devAvgMs >= 86400000) {
+                    const days = Math.floor(devAvgMs / 86400000);
+                    const remHrs = Math.round((devAvgMs % 86400000) / 3600000);
+                    dev.avgCompletionFormatted = remHrs > 0 ? `${days}d ${remHrs}h` : `${days} day${days > 1 ? "s" : ""}`;
+                } else {
+                    dev.avgCompletionFormatted = `${devAvgHrs} hrs`;
+                }
+            } else {
+                dev.avgCompletionHours = 0;
+                dev.avgCompletionMinutes = 0;
+                dev.avgCompletionFormatted = "—";
+            }
         });
 
         const sortedPerformance = Object.values(performanceMap)
@@ -249,20 +275,55 @@ export const getPerformanceReport = async (req, res) => {
             ? Math.round((totalCompleted / totalAssigned) * 100)
             : (sortedPerformance.length > 0 ? Math.round(sortedPerformance.reduce((s, d) => s + (d.taskCompletionRate || 0), 0) / sortedPerformance.length) : 0);
 
-        // Calculate average completion time in hours for completed tasks
-        const completedTasks = await Task.find({
+        // Calculate average completion time for completed tasks
+        let completedTasks = await Task.find({
             status: "done",
+            isDeleted: false,
+            assignedTo: { $in: userIds },
             ...(allTime !== "true" ? { createdAt: { $gte: start, $lte: end } } : {})
         }).select("createdAt updatedAt");
 
+        // Fallback: if period query returns 0 but user has completed tasks
+        if (completedTasks.length === 0 && userIds.length > 0) {
+            completedTasks = await Task.find({
+                status: "done",
+                isDeleted: false,
+                assignedTo: { $in: userIds }
+            }).select("createdAt updatedAt");
+        }
+
+        // Fallback: global completed tasks
+        if (completedTasks.length === 0) {
+            completedTasks = await Task.find({
+                status: "done",
+                isDeleted: false
+            }).select("createdAt updatedAt");
+        }
+
         let avgCompletionHours = 0;
+        let avgCompletionMinutes = 0;
+        let avgCompletionFormatted = "—";
+
         if (completedTasks.length > 0) {
-            const totalHours = completedTasks.reduce((sum, t) => {
-                const diffMs = new Date(t.updatedAt) - new Date(t.createdAt);
-                const hrs = Math.max(0, diffMs / (1000 * 60 * 60));
-                return sum + hrs;
+            const totalMs = completedTasks.reduce((sum, t) => {
+                const diffMs = Math.max(0, new Date(t.updatedAt).getTime() - new Date(t.createdAt).getTime());
+                return sum + diffMs;
             }, 0);
-            avgCompletionHours = Math.round((totalHours / completedTasks.length) * 10) / 10;
+            const avgMs = totalMs / completedTasks.length;
+            avgCompletionMinutes = Math.round(avgMs / 60000);
+            avgCompletionHours = Math.round((avgMs / 3600000) * 10) / 10;
+
+            if (avgMs < 60000) {
+                avgCompletionFormatted = "< 1 min";
+            } else if (avgCompletionMinutes < 60) {
+                avgCompletionFormatted = `${avgCompletionMinutes} min${avgCompletionMinutes > 1 ? "s" : ""}`;
+            } else if (avgMs >= 86400000) {
+                const days = Math.floor(avgMs / 86400000);
+                const remHrs = Math.round((avgMs % 86400000) / 3600000);
+                avgCompletionFormatted = remHrs > 0 ? `${days}d ${remHrs}h` : `${days} day${days > 1 ? "s" : ""}`;
+            } else {
+                avgCompletionFormatted = `${avgCompletionHours} hrs`;
+            }
         }
 
         res.json({
@@ -274,8 +335,12 @@ export const getPerformanceReport = async (req, res) => {
                 avgCompletionRate,
                 avgScore,
                 avgCompletionHours,
+                avgCompletionMinutes,
+                avgCompletionFormatted,
             },
             avgCompletionTime: avgCompletionHours,
+            avgCompletionMinutes,
+            avgCompletionFormatted,
             avgCompletionRate,
             avgScore
         });

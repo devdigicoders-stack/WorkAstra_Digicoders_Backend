@@ -281,17 +281,16 @@ export const generateOfferPdfWithPdfLib = async (data = {}) => {
     y2 -= 18;
     page2.drawText(companyName, { x: margin, y: y2, size: 10.5, font: fontBold, color: rgb(0.1, 0.1, 0.1) });
 
-    y2 -= 60;
-    page2.drawText(`I, ___________________________, accept the above offer and will begin the internship position on ${joinDate}.`, {
-        x: margin,
-        y: y2,
-        size: 10.5,
-        font: fontRegular,
-        color: rgb(0.15, 0.15, 0.15)
-    });
+    y2 -= 45;
+    const acceptText = `I, ___________________________, accept the above offer and will begin the internship position on ${joinDate}.`;
+    const acceptLines = wrapText(acceptText, fontRegular, 10.5, contentWidth);
+    for (const line of acceptLines) {
+        page2.drawText(line, { x: margin, y: y2, size: 10.5, font: fontRegular, color: rgb(0.15, 0.15, 0.15) });
+        y2 -= 16.5;
+    }
 
-    y2 -= 55;
-    page2.drawText("Signature_________________________.", {
+    y2 -= 40;
+    page2.drawText("Signature: _________________________.", {
         x: margin,
         y: y2,
         size: 10.5,

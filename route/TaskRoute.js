@@ -7,6 +7,7 @@ import {
     addComment, deleteComment,
     addAttachment, deleteAttachment,
     getMyTaskHistory, grantCommentAccess, startWork,
+    getPendingTasks,
 } from "../controller/TaskController.js";
 
 const router = express.Router();
@@ -14,6 +15,7 @@ router.use(protect);
 
 router.post("/", upload.array("attachments", 10), createTask);
 router.get("/my-history", getMyTaskHistory);
+router.get("/pending", getPendingTasks);
 router.get("/project/:projectId", getTasksByProject);
 router.get("/:id", getTaskById);
 router.put("/:id", updateTask);
