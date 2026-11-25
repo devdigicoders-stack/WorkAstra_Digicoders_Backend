@@ -7,13 +7,64 @@ import { getSubordinateIds } from "../utills/hierarchyHelper.js";
 
 const cid = (req) => req.user.company ? new mongoose.Types.ObjectId(req.user.company) : null;
 
+const PRIORITY_WEIGHTS = {
+    low: 1,
+    medium: 2,
+    high: 3,
+    urgent: 4,
+};
+
+const getIstMonthKey = (dateInput) => {
+    const d = new Date(new Date(dateInput).getTime() + 5.5 * 3600000);
+    return d.toISOString().slice(0, 7);
+};
+
+const getCurrentIstMonthKey = () => getIstMonthKey(Date.now());
+
+const formatMonthLabel = (monthKey) => {
+    const [y, m] = monthKey.split("-").map(Number);
+    if (!y || !m) return monthKey;
+    return new Date(y, m - 1, 1).toLocaleString("en-US", { month: "short", year: "numeric" });
+};
+
+const formatDurationStats = (tasks) => {
+    if (!tasks || tasks.length === 0) {
+        return { avgCompletionHours: 0, avgCompletionMinutes: 0, avgCompletionFormatted: "—" };
+    }
+    const totalMs = tasks.reduce((sum, t) => {
+        const diffMs = Math.max(0, new Date(t.updatedAt).getTime() - new Date(t.createdAt).getTime());
+        return sum + diffMs;
+    }, 0);
+    const avgMs = totalMs / tasks.length;
+    const avgCompletionMinutes = Math.round(avgMs / 60000);
+    const avgCompletionHours = Math.round((avgMs / 3600000) * 10) / 10;
+
+    let avgCompletionFormatted;
+    if (avgMs < 60000) {
+        avgCompletionFormatted = "< 1 min";
+    } else if (avgCompletionMinutes < 60) {
+        avgCompletionFormatted = `${avgCompletionMinutes} min${avgCompletionMinutes > 1 ? "s" : ""}`;
+    } else if (avgMs >= 86400000) {
+        const days = Math.floor(avgMs / 86400000);
+        const remHrs = Math.round((avgMs % 86400000) / 3600000);
+        avgCompletionFormatted = remHrs > 0 ? `${days}d ${remHrs}h` : `${days} day${days > 1 ? "s" : ""}`;
+    } else {
+        avgCompletionFormatted = `${avgCompletionHours} hrs`;
+    }
+
+    return { avgCompletionHours, avgCompletionMinutes, avgCompletionFormatted };
+};
+
 export const getPerformanceReport = async (req, res) => {
     try {
-        const { startDate, endDate, month, allTime } = req.query;
+        const { startDate, endDate, month, year, allTime, userId: targetUserId } = req.query;
         const companyId = cid(req);
         const reqUser = req.user;
 
-        let matchQuery = { isDeleted: false };
+        if (targetUserId && !mongoose.Types.ObjectId.isValid(targetUserId)) {
+            return res.status(400).json({ success: false, message: "Invalid userId parameter" });
+        }
+
         let attendanceMatch = {};
         
         const isAdmin = reqUser.role === "super_admin" || reqUser.role === "admin";
@@ -39,6 +90,12 @@ export const getPerformanceReport = async (req, res) => {
             start = new Date(`${startStr}T00:00:00.000+05:30`);
             end = new Date(`${endStr}T23:59:59.999+05:30`);
             attendanceMatch.date = { $gte: startStr, $lte: endStr };
+        } else if (year && /^\d{4}$/.test(String(year))) {
+            startStr = `${year}-01-01`;
+            endStr = `${year}-12-31`;
+            start = new Date(`${startStr}T00:00:00.000+05:30`);
+            end = new Date(`${endStr}T23:59:59.999+05:30`);
+            attendanceMatch.date = { $gte: startStr, $lte: endStr };
         } else if (startDate && endDate) {
             startStr = startDate.includes("T") ? startDate.split("T")[0] : startDate;
             endStr = endDate.includes("T") ? endDate.split("T")[0] : endDate;
@@ -47,45 +104,61 @@ export const getPerformanceReport = async (req, res) => {
             attendanceMatch.date = { $gte: startStr, $lte: endStr };
         } else {
             const now = new Date();
-            const year = now.getFullYear();
+            const curYear = now.getFullYear();
             const m = String(now.getMonth() + 1).padStart(2, "0");
-            const lastDay = new Date(year, now.getMonth() + 1, 0).getDate();
-            startStr = `${year}-${m}-01`;
-            endStr = `${year}-${m}-${String(lastDay).padStart(2, "0")}`;
+            const lastDay = new Date(curYear, now.getMonth() + 1, 0).getDate();
+            startStr = `${curYear}-${m}-01`;
+            endStr = `${curYear}-${m}-${String(lastDay).padStart(2, "0")}`;
             start = new Date(`${startStr}T00:00:00.000+05:30`);
             end = new Date(`${endStr}T23:59:59.999+05:30`);
             attendanceMatch.date = { $gte: startStr, $lte: endStr };
         }
 
-        const viewAll = isAdmin || (reqUser.permissions && reqUser.permissions.includes("VIEW_ALL_PERFORMANCE"));
+        let viewAll = isAdmin || (reqUser.permissions && reqUser.permissions.includes("VIEW_ALL_PERFORMANCE"));
+        if (!viewAll && reqUser.userId) {
+            const caller = await User.findById(reqUser.userId).select("role").populate("role", "name permissions").lean();
+            if (caller?.role?.name === "super_admin" || caller?.role?.name === "admin" || caller?.role?.permissions?.includes("VIEW_ALL_PERFORMANCE")) {
+                viewAll = true;
+            }
+        }
         
         let usersToFetch = [];
         if (reqUser.role === "super_admin") {
             // Super Admin sees everyone across all companies
             usersToFetch = await User.find({ isDeleted: false, isActive: true })
                 .populate("role", "name")
-                .select("_id firstName lastName profilePic role");
+                .select("_id firstName lastName email employeeCode profilePic role");
         } else if (reqUser.role === "admin") {
             // Company Admin sees all active employees of their company
             usersToFetch = await User.find({ companyId: companyId, isDeleted: false, isActive: true })
                 .populate("role", "name")
-                .select("_id firstName lastName profilePic role");
+                .select("_id firstName lastName email employeeCode profilePic role");
         } else if (viewAll) {
             // Manager/Lead with VIEW_ALL_PERFORMANCE: hierarchy filter — their subordinates
             const allowedIds = await getSubordinateIds(reqUser.userId);
             usersToFetch = await User.find({ _id: { $in: allowedIds }, isDeleted: false, isActive: true })
                 .populate("role", "name")
-                .select("_id firstName lastName profilePic role");
+                .select("_id firstName lastName email employeeCode profilePic role");
         } else {
             // Regular employee: only self
             const user = await User.findById(reqUser.userId)
                 .populate("role", "name")
-                .select("_id firstName lastName profilePic role");
+                .select("_id firstName lastName email employeeCode profilePic role");
             if (user) usersToFetch = [user];
         }
 
         // Exclude clients from employee performance report
         usersToFetch = usersToFetch.filter(u => u.role?.name?.toLowerCase() !== "client");
+
+        if (targetUserId) {
+            usersToFetch = usersToFetch.filter(u => String(u._id) === String(targetUserId));
+            if (usersToFetch.length === 0) {
+                return res.status(403).json({
+                    success: false,
+                    message: "Not authorized to view performance report for this employee"
+                });
+            }
+        }
 
         const userIds = usersToFetch.map(u => u._id);
 
@@ -164,7 +237,9 @@ export const getPerformanceReport = async (req, res) => {
         usersToFetch.forEach(u => {
             performanceMap[u._id.toString()] = {
                 userId: u._id,
-                name: `${u.firstName} ${u.lastName}`,
+                name: `${u.firstName} ${u.lastName}`.trim(),
+                email: u.email || "",
+                employeeCode: u.employeeCode || "",
                 profilePic: u.profilePic?.url || null,
                 tasksAssigned: 0,
                 tasksCompleted: 0,
@@ -237,33 +312,101 @@ export const getPerformanceReport = async (req, res) => {
 
             // Calculate per-developer average completion time for completed tasks
             const devCompleted = (dev.tasks || []).filter(t => t.status === "done");
-            if (devCompleted.length > 0) {
-                const devTotalMs = devCompleted.reduce((s, t) => s + Math.max(0, new Date(t.updatedAt).getTime() - new Date(t.createdAt).getTime()), 0);
-                const devAvgMs = devTotalMs / devCompleted.length;
-                const devAvgMins = Math.round(devAvgMs / 60000);
-                const devAvgHrs = Math.round((devAvgMs / 3600000) * 10) / 10;
-                dev.avgCompletionHours = devAvgHrs;
-                dev.avgCompletionMinutes = devAvgMins;
-                if (devAvgMs < 60000) {
-                    dev.avgCompletionFormatted = "< 1 min";
-                } else if (devAvgMins < 60) {
-                    dev.avgCompletionFormatted = `${devAvgMins} min${devAvgMins > 1 ? "s" : ""}`;
-                } else if (devAvgMs >= 86400000) {
-                    const days = Math.floor(devAvgMs / 86400000);
-                    const remHrs = Math.round((devAvgMs % 86400000) / 3600000);
-                    dev.avgCompletionFormatted = remHrs > 0 ? `${days}d ${remHrs}h` : `${days} day${days > 1 ? "s" : ""}`;
-                } else {
-                    dev.avgCompletionFormatted = `${devAvgHrs} hrs`;
-                }
-            } else {
-                dev.avgCompletionHours = 0;
-                dev.avgCompletionMinutes = 0;
-                dev.avgCompletionFormatted = "—";
-            }
+            Object.assign(dev, formatDurationStats(devCompleted));
         });
 
         const sortedPerformance = Object.values(performanceMap)
             .sort((a, b) => b.performanceScore - a.performanceScore);
+
+        // Build month-by-month breakdown when viewing a single employee's report
+        let monthlyBreakdown = [];
+        if (targetUserId && sortedPerformance.length === 1) {
+            const singleDev = sortedPerformance[0];
+            const monthlyAttAgg = await Attendance.aggregate([
+                { $match: { ...attendanceMatch, userId: userIds[0] } },
+                {
+                    $group: {
+                        _id: { $substrCP: ["$date", 0, 7] },
+                        daysPresent: { $sum: { $cond: [{ $in: ["$status", ["present", "late", "half-day", "early-leave", "regularized"]] }, 1, 0] } },
+                        daysLate: { $sum: { $cond: [{ $eq: ["$status", "late"] }, 1, 0] } },
+                        totalWorkingDays: { $sum: 1 }
+                    }
+                }
+            ]);
+
+            const attByMonth = {};
+            monthlyAttAgg.forEach(a => { if (a._id) attByMonth[a._id] = a; });
+
+            const tasksByMonth = {};
+            (singleDev.tasks || []).forEach(t => {
+                const mk = getIstMonthKey(t.createdAt);
+                if (!tasksByMonth[mk]) tasksByMonth[mk] = [];
+                tasksByMonth[mk].push(t);
+            });
+
+            const monthSet = new Set([...Object.keys(attByMonth), ...Object.keys(tasksByMonth)]);
+            if (allTime !== "true" && startStr && endStr) {
+                const [sy, sm] = startStr.slice(0, 7).split("-").map(Number);
+                const [ey, em] = endStr.slice(0, 7).split("-").map(Number);
+                const curIstMonth = getCurrentIstMonthKey();
+                let y = sy, m = sm;
+                let guard = 0;
+                while ((y < ey || (y === ey && m <= em)) && guard < 48) {
+                    const mk = `${y}-${String(m).padStart(2, "0")}`;
+                    // For full-year filter on the current year, omit future empty months
+                    const isFutureEmptyYearMonth = year && mk > curIstMonth && !monthSet.has(mk);
+                    if (!isFutureEmptyYearMonth) {
+                        monthSet.add(mk);
+                    }
+                    m += 1;
+                    if (m > 12) { m = 1; y += 1; }
+                    guard += 1;
+                }
+            }
+
+            monthlyBreakdown = Array.from(monthSet)
+                .sort()
+                .map(mk => {
+                    const mTasks = tasksByMonth[mk] || [];
+                    const mDone = mTasks.filter(t => t.status === "done");
+                    let totalPoints = 0;
+                    let earnedPoints = 0;
+                    let lateTasksCount = 0;
+
+                    mTasks.forEach(t => {
+                        const weight = PRIORITY_WEIGHTS[t.priority] || 2;
+                        totalPoints += weight;
+                        if (t.status === "done") {
+                            earnedPoints += weight;
+                            if (t.dueDate && new Date(t.updatedAt) > new Date(t.dueDate)) {
+                                lateTasksCount += 1;
+                            }
+                        }
+                    });
+
+                    const att = attByMonth[mk] || { daysPresent: 0, daysLate: 0, totalWorkingDays: 0 };
+                    const taskCompletionRate = totalPoints > 0 ? Math.round((earnedPoints / totalPoints) * 100) : 0;
+                    const attendanceRate = att.totalWorkingDays > 0 ? Math.round((att.daysPresent / att.totalWorkingDays) * 100) : 0;
+                    const rawScore = (taskCompletionRate * 0.6) + (attendanceRate * 0.4) - (att.daysLate * 2) - (lateTasksCount * 5);
+                    const performanceScore = Math.max(0, Math.round(rawScore));
+                    const durationStats = formatDurationStats(mDone);
+
+                    return {
+                        month: mk,
+                        monthLabel: formatMonthLabel(mk),
+                        tasksAssigned: mTasks.length,
+                        tasksCompleted: mDone.length,
+                        lateTasks: lateTasksCount,
+                        taskCompletionRate,
+                        daysPresent: att.daysPresent,
+                        daysLate: att.daysLate,
+                        totalWorkingDays: att.totalWorkingDays,
+                        attendanceRate,
+                        performanceScore,
+                        ...durationStats
+                    };
+                });
+        }
 
         // Calculate team summary
         const totalAssigned = sortedPerformance.reduce((s, d) => s + (d.tasksAssigned || 0), 0);
@@ -283,8 +426,8 @@ export const getPerformanceReport = async (req, res) => {
             ...(allTime !== "true" ? { createdAt: { $gte: start, $lte: end } } : {})
         }).select("createdAt updatedAt");
 
-        // Fallback: if period query returns 0 but user has completed tasks
-        if (completedTasks.length === 0 && userIds.length > 0) {
+        // Fallback when fetching team dashboard summary (skip for single-employee period queries)
+        if (!targetUserId && completedTasks.length === 0 && userIds.length > 0) {
             completedTasks = await Task.find({
                 status: "done",
                 isDeleted: false,
@@ -292,43 +435,19 @@ export const getPerformanceReport = async (req, res) => {
             }).select("createdAt updatedAt");
         }
 
-        // Fallback: global completed tasks
-        if (completedTasks.length === 0) {
+        if (!targetUserId && completedTasks.length === 0) {
             completedTasks = await Task.find({
                 status: "done",
                 isDeleted: false
             }).select("createdAt updatedAt");
         }
 
-        let avgCompletionHours = 0;
-        let avgCompletionMinutes = 0;
-        let avgCompletionFormatted = "—";
-
-        if (completedTasks.length > 0) {
-            const totalMs = completedTasks.reduce((sum, t) => {
-                const diffMs = Math.max(0, new Date(t.updatedAt).getTime() - new Date(t.createdAt).getTime());
-                return sum + diffMs;
-            }, 0);
-            const avgMs = totalMs / completedTasks.length;
-            avgCompletionMinutes = Math.round(avgMs / 60000);
-            avgCompletionHours = Math.round((avgMs / 3600000) * 10) / 10;
-
-            if (avgMs < 60000) {
-                avgCompletionFormatted = "< 1 min";
-            } else if (avgCompletionMinutes < 60) {
-                avgCompletionFormatted = `${avgCompletionMinutes} min${avgCompletionMinutes > 1 ? "s" : ""}`;
-            } else if (avgMs >= 86400000) {
-                const days = Math.floor(avgMs / 86400000);
-                const remHrs = Math.round((avgMs % 86400000) / 3600000);
-                avgCompletionFormatted = remHrs > 0 ? `${days}d ${remHrs}h` : `${days} day${days > 1 ? "s" : ""}`;
-            } else {
-                avgCompletionFormatted = `${avgCompletionHours} hrs`;
-            }
-        }
+        const { avgCompletionHours, avgCompletionMinutes, avgCompletionFormatted } = formatDurationStats(completedTasks);
 
         res.json({
             success: true,
             data: sortedPerformance,
+            monthlyBreakdown,
             summary: {
                 totalAssigned,
                 totalCompleted,
