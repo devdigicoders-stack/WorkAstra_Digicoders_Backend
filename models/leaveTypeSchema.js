@@ -9,12 +9,13 @@ const LeaveTypeSchema = new mongoose.Schema({
     carryForward: { type: Boolean, default: false },
     maxCarryForward: { type: Number, default: 0 },
     companyId: { type: mongoose.Schema.Types.ObjectId, ref: "Company", default: null },
+    branchId: { type: mongoose.Schema.Types.ObjectId, ref: "Branch", default: null }, // null = All Branches
     status: { type: Boolean, default: true },
     isDeleted: { type: Boolean, default: false },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 }, { timestamps: true });
 
-LeaveTypeSchema.index({ code: 1, companyId: 1 }, { unique: true });
+LeaveTypeSchema.index({ code: 1, companyId: 1, branchId: 1 }, { unique: true });
 
 export default mongoose.model("LeaveType", LeaveTypeSchema);

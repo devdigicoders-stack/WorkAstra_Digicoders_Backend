@@ -7,7 +7,7 @@ import { createNotification } from "../utills/notificationHelper.js";
 import { getSubordinateIds } from "../utills/hierarchyHelper.js";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-const getUser = (userId) => User.findById(userId).select("companyId role").populate("role", "name");
+const getUser = (userId) => User.findById(userId).select("companyId branch role").populate("role", "name");
 
 const countWorkingDays = async (fromDate, toDate, companyId, weekOff = [0, 6]) => {
     const holidays = await Holiday.find({ companyId, date: { $gte: fromDate, $lte: toDate } }).select("date");
@@ -30,22 +30,30 @@ const countWorkingDays = async (fromDate, toDate, companyId, weekOff = [0, 6]) =
 export const getMyBalance = async (req, res) => {
     try {
         const year = parseInt(req.query.year) || new Date().getFullYear();
+        const me = await User.findById(req.user.userId).select("branch").lean();
         const balances = await LeaveBalance.find({ userId: req.user.userId, year })
-            .populate("leaveTypeId", "name code isPaid defaultDays");
+            .populate("leaveTypeId", "name code isPaid defaultDays branchId isDeleted");
 
-        const enriched = balances.map(b => {
-            const obj = b.toObject ? b.toObject() : b;
-            const total = (obj.allocated || 0) + (obj.carried || 0);
-            const used = obj.used || 0;
-            const pending = obj.pending || 0;
-            const remaining = Math.max(0, total - used - pending);
-            return {
-                ...obj,
-                total,
-                remaining,
-                leaveType: obj.leaveTypeId
-            };
-        });
+        const enriched = balances
+            .filter(b => {
+                const lt = b.leaveTypeId;
+                if (!lt || lt.isDeleted) return false;
+                if (lt.branchId && (!me?.branch || String(lt.branchId) !== String(me.branch))) return false;
+                return true;
+            })
+            .map(b => {
+                const obj = b.toObject ? b.toObject() : b;
+                const total = (obj.allocated || 0) + (obj.carried || 0);
+                const used = obj.used || 0;
+                const pending = obj.pending || 0;
+                const remaining = Math.max(0, total - used - pending);
+                return {
+                    ...obj,
+                    total,
+                    remaining,
+                    leaveType: obj.leaveTypeId
+                };
+            });
 
         res.status(200).json({ balances: enriched, success: true });
     } catch (err) {
@@ -58,7 +66,7 @@ export const getUserBalance = async (req, res) => {
     try {
         const year = parseInt(req.query.year) || new Date().getFullYear();
         const balances = await LeaveBalance.find({ userId: req.params.userId, year })
-            .populate("leaveTypeId", "name code isPaid defaultDays")
+            .populate("leaveTypeId", "name code isPaid defaultDays branchId")
             .populate("userId", "firstName lastName employeeCode");
         res.status(200).json({ balances, success: true });
     } catch (err) {
@@ -71,8 +79,14 @@ export const assignLeaveBalance = async (req, res) => {
     try {
         const { userId, leaveTypeId, allocated, year: reqYear } = req.body;
         const year = reqYear || new Date().getFullYear();
-        const u = await User.findById(userId).select("companyId");
+        const u = await User.findById(userId).select("companyId branch");
         if (!u) return res.status(404).json({ message: "User not found", success: false });
+
+        const lt = await LeaveType.findById(leaveTypeId);
+        if (!lt || lt.isDeleted) return res.status(404).json({ message: "Leave type not found", success: false });
+        if (lt.branchId && String(lt.branchId) !== String(u.branch)) {
+            return res.status(400).json({ message: "This leave type belongs to a different branch than the selected employee", success: false });
+        }
 
         const balance = await LeaveBalance.findOneAndUpdate(
             { userId, leaveTypeId, year },
@@ -86,17 +100,28 @@ export const assignLeaveBalance = async (req, res) => {
     }
 };
 
-// POST /api/leaves/balance/bulk-assign  — assign leave to all company employees
+// POST /api/leaves/balance/bulk-assign  — assign leave to all company/branch employees
 export const bulkAssignLeaveBalance = async (req, res) => {
     try {
         const { leaveTypeId, allocated, year: reqYear, companyId: bodyCompany } = req.body;
         const year = reqYear || new Date().getFullYear();
         const reqUser = await getUser(req.user.userId);
-        const companyId = reqUser.role?.name === "super_admin" && bodyCompany ? bodyCompany : reqUser.companyId;
+        const roleName = reqUser?.role?.name;
+        const isSuperAdmin = roleName === "super_admin";
+        const isAdmin = roleName === "admin" || isSuperAdmin;
+        const companyId = isSuperAdmin && bodyCompany ? bodyCompany : reqUser.companyId;
 
-        const users = await User.find({ companyId, isActive: true, isDeleted: false }).select("_id");
         const lt = await LeaveType.findById(leaveTypeId);
-        if (!lt) return res.status(404).json({ message: "Leave type not found", success: false });
+        if (!lt || lt.isDeleted) return res.status(404).json({ message: "Leave type not found", success: false });
+
+        const userFilter = { companyId, isActive: true, isDeleted: false };
+        if (lt.branchId) {
+            userFilter.branch = lt.branchId;
+        } else if (!isAdmin && reqUser?.branch) {
+            userFilter.branch = reqUser.branch;
+        }
+
+        const users = await User.find(userFilter).select("_id");
 
         const ops = users.map(u => ({
             updateOne: {
@@ -134,7 +159,7 @@ export const applyLeave = async (req, res) => {
         if (fromDate > toDate)
             return res.status(400).json({ message: "fromDate cannot be after toDate", success: false });
 
-        const u = await User.findById(userId).select("companyId workShift");
+        const u = await User.findById(userId).select("companyId branch workShift");
         const year = new Date(fromDate).getFullYear();
 
         // Get employee's week-off days from their assigned shift
@@ -162,7 +187,14 @@ export const applyLeave = async (req, res) => {
 
         // #1 — Check and reserve balance
         const leaveType = await LeaveType.findById(leaveTypeId);
-        if (!leaveType) return res.status(404).json({ message: "Leave type not found", success: false });
+        if (!leaveType || leaveType.isDeleted) return res.status(404).json({ message: "Leave type not found", success: false });
+
+        if (leaveType.companyId && String(leaveType.companyId) !== String(u.companyId)) {
+            return res.status(403).json({ message: "This leave type does not belong to your company", success: false });
+        }
+        if (leaveType.branchId && (!u.branch || String(leaveType.branchId) !== String(u.branch))) {
+            return res.status(403).json({ message: "This leave type is restricted to a different branch", success: false });
+        }
 
         const balance = await LeaveBalance.findOne({ userId, leaveTypeId, year });
         const available = balance ? (balance.allocated + balance.carried - balance.used - balance.pending) : 0;
