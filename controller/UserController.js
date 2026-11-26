@@ -270,7 +270,8 @@ export const getUserProfile = async (req, res) => {
             .populate("workShift", "name startTime endTime")
             .populate("employmentStatus", "name")
             .populate("reportingTo", "firstName lastName employeeCode profilePic")
-            .populate("department", "name");
+            .populate("department", "name")
+            .populate("designation", "name");
         if (!user) return res.status(404).json({ message: "User not found", success: false });
         res.status(200).json({ user, success: true });
     } catch (error) {
