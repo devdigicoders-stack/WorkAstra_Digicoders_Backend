@@ -98,13 +98,14 @@ export const getCompanyRegularizations = async (req, res) => {
     }
 };
 
-// GET /api/regularization/team  — manager sees their direct reports' requests
+// GET /api/regularization/team  — manager sees their hierarchy reports' requests
 export const getTeamRegularizations = async (req, res) => {
     try {
         const { status } = req.query;
-        const directReports = await User.find({ reportingTo: req.user.userId, isDeleted: false }).select("_id");
-        if (!directReports.length) return res.status(200).json({ regularizations: [], success: true });
-        const filter = { userId: { $in: directReports.map(u => u._id) } };
+        const allHierarchyIds = await getSubordinateIds(req.user.userId);
+        const subordinateIds = allHierarchyIds.filter(id => id.toString() !== req.user.userId.toString());
+        if (!subordinateIds.length) return res.status(200).json({ regularizations: [], success: true });
+        const filter = { userId: { $in: subordinateIds } };
         if (status) filter.status = status;
         const regs = await Regularization.find(filter)
             .populate("userId", "firstName lastName employeeCode profilePic")

@@ -366,7 +366,19 @@ export const getAttendanceSummary = async (req, res) => {
         let filter = { date: { $regex: `^${month}` } };
 
         if (qUserId) {
-            filter.userId = qUserId;
+            if (isSuperAdmin || qUserId.toString() === req.user.userId.toString()) {
+                filter.userId = qUserId;
+            } else {
+                const allowedIds = await getSubordinateIds(req.user.userId);
+                const isAllowed = allowedIds.some(id => id.toString() === qUserId.toString());
+                if (!isAllowed) {
+                    return res.status(200).json({
+                        summary: { present: 0, regularized: 0, late: 0, halfDay: 0, earlyLeave: 0, absent: 0, totalDays: 0, totalHours: 0, isTeam: false },
+                        success: true
+                    });
+                }
+                filter.userId = qUserId;
+            }
         } else if (scope === "my") {
             filter.userId = req.user.userId;
         } else if (isAdmin || scope === "team") {
@@ -486,20 +498,43 @@ export const adminCreatePunch = async (req, res) => {
         res.status(500).json({ message: error.message, success: false });
     }
 };
-// GET /api/attendance/team  — manager sees their direct reports' attendance
+// GET /api/attendance/team  — manager sees their reporting hierarchy attendance (juniors & juniors' juniors)
 export const getTeamAttendance = async (req, res) => {
     try {
-        const { date, month, startDate, endDate } = req.query;
-        const directReports = await User.find({ reportingTo: req.user.userId, isDeleted: false })
+        const { date, month, startDate, endDate, userId } = req.query;
+        const allHierarchyIds = await getSubordinateIds(req.user.userId);
+        const subordinateIds = allHierarchyIds.filter(id => id.toString() !== req.user.userId.toString());
+
+        if (!subordinateIds.length) {
+            return res.status(200).json({ records: [], hasTeam: false, success: true });
+        }
+
+        const subordinates = await User.find({
+            _id: { $in: subordinateIds },
+            isDeleted: { $ne: true }
+        })
             .populate("role", "name")
             .select("_id role");
-        
-        // Exclude client role from direct reports
-        const validReports = directReports.filter(u => u.role?.name?.toLowerCase() !== "client");
-        if (!validReports.length) return res.status(200).json({ records: [], success: true });
 
-        const filter = { userId: { $in: validReports.map(u => u._id) } };
-        
+        // Exclude client role from subordinates
+        const validReports = subordinates.filter(u => u.role?.name?.toLowerCase() !== "client");
+        if (!validReports.length) {
+            return res.status(200).json({ records: [], hasTeam: false, success: true });
+        }
+
+        const allowedIds = validReports.map(u => u._id);
+        const filter = {};
+
+        if (userId) {
+            const isAllowedTarget = allowedIds.some(id => id.toString() === userId.toString());
+            if (!isAllowedTarget) {
+                return res.status(200).json({ records: [], hasTeam: true, success: true });
+            }
+            filter.userId = userId;
+        } else {
+            filter.userId = { $in: allowedIds };
+        }
+
         if (startDate && endDate) {
             filter.date = { $gte: startDate, $lte: endDate };
         } else if (date) {
@@ -519,7 +554,7 @@ export const getTeamAttendance = async (req, res) => {
 
         const filteredRecords = records.filter(r => r.userId && r.userId.role?.name?.toLowerCase() !== "client");
 
-        res.status(200).json({ records: filteredRecords, success: true });
+        res.status(200).json({ records: filteredRecords, hasTeam: true, success: true });
     } catch (error) {
         res.status(500).json({ message: error.message, success: false });
     }
@@ -531,11 +566,11 @@ export const getCompanyAttendance = async (req, res) => {
         const reqUser = await User.findById(req.user.userId).select("companyId role").populate("role", "name");
         if (!reqUser) return res.status(404).json({ message: "User not found", success: false });
 
-        // Find client role to exclude clients from attendance
-        const clientRole = await Role.findOne({ name: { $regex: /^client$/i } });
+        // Find all client roles across companies to exclude clients from attendance
+        const clientRoles = await Role.find({ name: { $regex: /^client$/i } }).select("_id");
         let clientUserIds = [];
-        if (clientRole) {
-            const clients = await User.find({ role: clientRole._id }).select("_id");
+        if (clientRoles.length > 0) {
+            const clients = await User.find({ role: { $in: clientRoles.map(r => r._id) } }).select("_id");
             clientUserIds = clients.map(c => c._id.toString());
         }
 
@@ -543,14 +578,28 @@ export const getCompanyAttendance = async (req, res) => {
 
         if (reqUser.role?.name === "super_admin") {
             // Super Admin sees all attendance records (excluding clients)
-            if (clientUserIds.length > 0) {
+            if (userId) {
+                if (clientUserIds.includes(userId.toString())) {
+                    return res.status(200).json({ records: [], success: true });
+                }
+                filter.userId = userId;
+            } else if (clientUserIds.length > 0) {
                 filter.userId = { $nin: clientUserIds };
             }
         } else {
-            // Hierarchy filter: only see attendance of self + subordinates
+            // Hierarchy filter: only see attendance of self + subordinates (juniors & juniors' juniors)
             const allowedIds = await getSubordinateIds(req.user.userId);
             const nonClientAllowedIds = allowedIds.filter(id => !clientUserIds.includes(id.toString()));
-            filter.userId = { $in: nonClientAllowedIds };
+
+            if (userId) {
+                const isAllowedTarget = nonClientAllowedIds.some(id => id.toString() === userId.toString());
+                if (!isAllowedTarget) {
+                    return res.status(200).json({ records: [], success: true });
+                }
+                filter.userId = userId;
+            } else {
+                filter.userId = { $in: nonClientAllowedIds };
+            }
         }
 
         if (startDate && endDate) {
@@ -560,9 +609,6 @@ export const getCompanyAttendance = async (req, res) => {
         } else if (month) {
             filter.date = { $regex: `^${month}` };
         }
-
-        // Admin can further filter down to a specific user
-        if (userId) filter.userId = userId;
 
         const records = await Attendance.find(filter)
             .populate({
