@@ -159,6 +159,11 @@ export const checkIn = async (req, res) => {
             // Ensure punches array exists
             if (!Array.isArray(existing.punches)) existing.punches = [];
 
+            // If an auto-absent record (punches = [] or status = "absent") already existed for today, treat this as first real check-in
+            const isFirstRealCheckIn = existing.punches.length === 0 || existing.status === "absent";
+            const primaryCheckInForStatus = existing.punches[0]?.checkIn ? new Date(existing.punches[0].checkIn) : now;
+            const resolvedStatus = resolveCheckInStatus(primaryCheckInForStatus, shift);
+
             // Add new punch with device info
             existing.punches.push({
                 checkIn: now,
@@ -170,6 +175,12 @@ export const checkIn = async (req, res) => {
             existing.checkOut = null; // open again
             existing.deviceType = deviceType;
             existing.deviceDetails = deviceDetails;
+            if (!existing.checkInLocation?.latitude && (latitude != null || longitude != null || address)) {
+                existing.checkInLocation = { latitude, longitude, address };
+            }
+            if (!existing.workShiftId && shift?._id) existing.workShiftId = shift._id;
+            if (!existing.companyId && user.companyId) existing.companyId = user.companyId;
+            if (isFirstRealCheckIn) existing.status = resolvedStatus;
             if (!existing.createdBy) existing.createdBy = userId;
             await existing.save();
 
@@ -178,9 +189,15 @@ export const checkIn = async (req, res) => {
                 .populate("createdBy", "firstName lastName");
 
             const checkInTime = now.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true, timeZone: "Asia/Kolkata" });
-            await createNotification({ userId, title: "Check-In Recorded", message: `You re-checked in at ${checkInTime}.`, type: "attendance", link: "/attendance", createdBy: userId });
-            await notifyAdmins(user.companyId, "User Checked In", `${employeeName} re-checked in at ${checkInTime}.`);
-            return res.status(200).json({ message: "Re-checked in successfully", attendance: populated, success: true });
+            const selfMsg = isFirstRealCheckIn
+                ? `You checked in at ${checkInTime}. Status: ${existing.status}.`
+                : `You re-checked in at ${checkInTime}.`;
+            const adminMsg = isFirstRealCheckIn
+                ? `${employeeName} checked in at ${checkInTime}. Status: ${existing.status}.`
+                : `${employeeName} re-checked in at ${checkInTime}.`;
+            await createNotification({ userId, title: "Check-In Recorded", message: selfMsg, type: "attendance", link: "/attendance", createdBy: userId });
+            await notifyAdmins(user.companyId, "User Checked In", adminMsg);
+            return res.status(200).json({ message: isFirstRealCheckIn ? "Checked in successfully" : "Re-checked in successfully", attendance: populated, success: true });
         }
 
         const status = resolveCheckInStatus(now, shift);
@@ -275,6 +292,10 @@ export const checkOut = async (req, res) => {
         }, 0).toFixed(2));
 
         let status = attendance.status;
+        if (status === "absent") {
+            const primaryCheckIn = attendance.checkIn || attendance.punches?.[0]?.checkIn;
+            status = primaryCheckIn ? resolveCheckInStatus(new Date(primaryCheckIn), shift) : "present";
+        }
         const checkOutStatus = resolveCheckOutStatus(now, shift, status);
         if (totalWorkHours < 4) status = "half-day";
         else if (checkOutStatus === "early-leave") status = "early-leave";
